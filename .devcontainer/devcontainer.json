@@ -1,0 +1,21 @@
+{
+  "name": "My Python Dev Container",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": ".."
+  },
+  "settings": {
+    "python.formatting.provider": "black",
+    "editor.formatOnSave": true,
+    "editor.codeActionsOnSave": {
+      "source.organizeImports": true
+    }
+  },
+  "extensions": [
+    "ms-python.python",
+    "ms-python.black-formatter",
+    "charliermarsh.ruff",
+    "ms-toolsai.jupyter",
+  ],
+  "postCreateCommand": "pip install -r requirements.txt && pip install -e ."
+}
