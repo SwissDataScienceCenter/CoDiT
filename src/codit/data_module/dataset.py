@@ -55,7 +55,10 @@ class OceanDataset(Dataset):
             self.context_xarray = context_functions.load_data(
                 self.config, latitudes=latitudes, longitudes=longitudes
             )
-        self.trajectories = self._load_trajectories()
+        try:
+            self.trajectories = self._load_trajectories()
+        except FileNotFoundError:
+            self.trajectories = []
 
     def _load_trajectories(self) -> list:
         """Load the trajectories from the dataset.
