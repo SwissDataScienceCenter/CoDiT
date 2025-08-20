@@ -10,9 +10,13 @@ RUN pip install --upgrade pip
 # && \
 #    pip install black ruff mypy pre-commit
 
+# Copy all files from the current directory to /workspace
+COPY . /workspace/
+
 # Optional: copy your requirements
 COPY requirements.txt /workspace/requirements.txt
-RUN pip install --no-cache-dir -r /workspace/requirements.txt && pre-commit install
+RUN pip install --no-cache-dir -r /workspace/requirements.txt 
+# && pre-commit install
 RUN mypy --install-types --non-interactive
 
 # Create a non-root user with a home directory and set shell to bash
@@ -20,7 +24,7 @@ RUN useradd -m appuser
 RUN chsh -s /bin/bash appuser
 
 # Set ownership of /workspace
-#RUN chown -R appuser:appuser /workspace
+RUN chown -R appuser:appuser /workspace
 
 # Configure shell prompt
 RUN mkdir -p /home/appuser
