@@ -2,6 +2,8 @@ import os
 
 import jax
 import optax
+import yaml
+import pickle
 import orbax.checkpoint as ocp
 from flax import nnx
 from flax.training.early_stopping import EarlyStopping
@@ -115,7 +117,7 @@ def load_checkpoint(model: nnx.Module, ckpt_dir: str) -> nnx.Module:
 
 class ConvNetModel(BaseTrajectoryModel):
 
-    def __init__(self, name: str, params: dict):
+    def __init__(self, name: str, params: dict, load_ckpt: bool = True):
         """
         Initializes the ConvNet model module.
 
@@ -140,11 +142,14 @@ class ConvNetModel(BaseTrajectoryModel):
         self.ckpt_dir = os.path.join(config_paths.MODEL_PATH, "ckpts", self.name)
         if not os.path.exists(self.ckpt_dir):
             os.makedirs(self.ckpt_dir)
-        try:
-            self.model = load_checkpoint(self.model, self.ckpt_dir)
-            self.trained_sucessfully = True
-        except Exception as e:
-            print(f"Error restoring model state: {e}")
+        if load_ckpt:
+            try:
+                self.model = load_checkpoint(self.model, self.ckpt_dir)
+                self.trained_sucessfully = True
+            except Exception as e:
+                print(f"Error restoring model state: {e}")
+                self.trained_sucessfully = False
+        else:
             self.trained_sucessfully = False
 
     def _fit(
@@ -295,3 +300,68 @@ class ConvNetModel(BaseTrajectoryModel):
         )(self.model, jnp.arange(num_preds))
 
         return pred_coords
+    
+    
+    def export_trained_model(self, model_name: str | None= None, export_path: str|None = None) -> None:
+        """
+        Exports the trained model to a specified path.
+
+        Args:
+            model_name (str): The name of the model to export. If None, uses the model's name.
+            export_path (str): The directory where the model will be exported. If None, uses a default path.
+
+        Raises:
+            ValueError: If the model parameters are not set.
+        """
+        
+        if model_name is None:
+            model_name = self.name
+        if export_path is None:
+            export_path = os.path.join(config_paths.MODEL_PATH, "trained_models")
+        
+        model_path = os.path.join(export_path, model_name)
+        if not os.path.exists(model_path):
+            os.makedirs(model_path)
+
+        #nn_params_path = os.path.join(model_path, "nn_params.npz")
+        #jnp.savez(nn_params_path, params=self.nn_params, allow_pickle=True)
+        with open(os.path.join(model_path, "model_config.yml"), "w") as f:
+            yaml.dump(self.params, f, default_flow_style=False)
+            
+        nnx_model_path = os.path.join(model_path, "nnx_model.pkl")
+        graph, state = nnx.split(self.model)
+        with open(nnx_model_path, "wb") as f:
+            pickle.dump(state, f)
+            
+    @classmethod
+    def import_trained_model(cls, model_name: str, import_path: str | None = None) -> "ConvNetModel":
+        """
+        Imports a trained ConvNet model from the specified path.
+
+        Args:
+            model_name (str): The name of the model to import.
+            import_path (str | None): The path from which to import the model. If None, uses a default path.
+
+        Returns:
+            ConvNetModel: An instance of the ConvNetModel class with the loaded parameters.
+        """
+        if import_path is None:
+            import_path = os.path.join(config_paths.MODEL_PATH, "trained_models")
+        
+        model_path = os.path.join(import_path, model_name)
+        with open(os.path.join(model_path, "model_config.yml"), "r") as f:
+            model_config = yaml.safe_load(f)
+        
+        nnx_model_path = os.path.join(model_path, "nnx_model.pkl")
+        if not os.path.exists(nnx_model_path):
+            raise FileNotFoundError(f"NNX parameters file {nnx_model_path} does not exist.")
+
+        with open(nnx_model_path, "rb") as f:
+            state = pickle.load(f)
+
+        model = cls(model_name, model_config, load_ckpt=False)
+        graph, _ = nnx.split(model.model)
+        model.model = nnx.merge(graph, state)
+        model.trained_sucessfully = True
+        return model
+        
