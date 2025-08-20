@@ -1,4 +1,6 @@
-import os, yaml
+import os
+import yaml
+import pickle
 import shutil
 import warnings
 
@@ -660,8 +662,9 @@ class DiffusionModel(BaseTrajectoryModel):
         
         if self.nn_params is None:
             raise ValueError("Model parameters (nn_params) are None. Train or load the model before exporting.")
-        jnp.savez(nn_params_path, params=self.nn_params, std=self.std, allow_pickle=True)
-        
+        #jnp.savez(nn_params_path, params=self.nn_params, std=self.std, allow_pickle=True)
+        with open(nn_params_path, "wb") as f:
+            pickle.dump({"params": self.nn_params, "std": self.std}, f)
     
     @classmethod
     def import_trained_model(cls, model_name: str, import_path: str|None) -> "DiffusionModel":
@@ -689,8 +692,10 @@ class DiffusionModel(BaseTrajectoryModel):
         if not os.path.exists(nn_params_path):
             raise FileNotFoundError(f"NN parameters file {nn_params_path} does not exist.")
         
-        nn_params = jnp.load(nn_params_path, allow_pickle=True)
-        
+        #nn_params = jnp.load(nn_params_path, allow_pickle=True)
+        with open(nn_params_path, "rb") as f:
+            nn_params = pickle.load(f)
+            
         model = cls(model_name, model_config)
         model.nn_params = nn_params["params"]
         model.std = nn_params["std"]
