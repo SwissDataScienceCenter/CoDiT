@@ -11,9 +11,8 @@ from jax import vmap
 from torch.utils import data
 from tqdm import tqdm
 
-from codit import config_paths
+from codit.data_module import config_paths, data_transform
 from codit.data_module.dataset import OceanDataset, OceanTrainingDataset
-from codit.data_module import data_transform
 from codit.model_module.base_model import BaseTrajectoryModel
 
 

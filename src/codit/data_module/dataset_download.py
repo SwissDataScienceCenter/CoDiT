@@ -17,7 +17,7 @@ import requests
 import xarray as xr
 from tqdm import tqdm
 
-from codit import config_paths
+from codit.data_module import config_paths
 
 os.environ["COPERNICUSMARINE_CACHE_DIRECTORY"] = "/tmp"
 TMP_PATH = "/tmp"

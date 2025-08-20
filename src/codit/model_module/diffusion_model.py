@@ -24,19 +24,19 @@ from jax import numpy as jnp
 from torch.utils import data
 from torch.utils.tensorboard import SummaryWriter
 
-# Suppress the SerializationWarning
-from codit import config_paths
-from codit.data_module.dataset import OceanTrainingDataset
-from codit.data_module import data_transform
-from codit.model_module.base_model import BaseTrajectoryModel
 from codit.codit_module import (
     diffusion_models,
     noising_functions,
     scheduler,
 )
-from adopt.process_diffusion.brownian_noise_models import (
+from codit.codit_module.brownian_noise_models import (
     WalkNoiseModel,
 )
+
+# Suppress the SerializationWarning
+from codit.data_module import config_paths, data_transform
+from codit.data_module.dataset import OceanTrainingDataset
+from codit.model_module.base_model import BaseTrajectoryModel
 
 warnings.filterwarnings("ignore", category=xr.SerializationWarning)
 np.random.seed(0)

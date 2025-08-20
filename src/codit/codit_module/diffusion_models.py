@@ -15,8 +15,8 @@ from torch.utils.tensorboard import SummaryWriter
 # import jax_dataloader as jdl
 from tqdm import tqdm
 
+from codit.codit_module import noising_functions
 from codit.data_module import data_transform
-from codit.process_diffusion import noising_functions
 
 ##### Features stuff #####
 
