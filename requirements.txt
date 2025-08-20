@@ -1,4 +1,7 @@
 matplotlib
+ipykernel
+jupyter
+ipywidgets
 numpy 
 cartopy
 cdsapi
@@ -8,6 +11,7 @@ xarray==2024.2.0
 pandas
 jax
 flax>=0.10.6
+torch
 copernicusmarine
 interpax
 geopandas

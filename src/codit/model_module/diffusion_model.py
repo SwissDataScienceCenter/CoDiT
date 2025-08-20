@@ -1,4 +1,4 @@
-import os
+import os, yaml
 import shutil
 import warnings
 
@@ -35,7 +35,7 @@ from codit.codit_module.brownian_noise_models import (
 
 # Suppress the SerializationWarning
 from codit.data_module import config_paths, data_transform
-from codit.data_module.dataset import OceanTrainingDataset
+from codit.data_module.dataset import OceanTrainingDataset, OceanDataset
 from codit.model_module.base_model import BaseTrajectoryModel
 
 warnings.filterwarnings("ignore", category=xr.SerializationWarning)
@@ -189,7 +189,7 @@ def restore_checkpoint(ckpt_file: str) -> tuple[nn.Module, list, list, jnp.ndarr
 class DiffusionModel(BaseTrajectoryModel):
 
     def __init__(self, name: str, params: dict) -> None:
-        super().__init__(name, params)
+        
         self.type = "diffusion"
 
         default_params = {
@@ -208,17 +208,15 @@ class DiffusionModel(BaseTrajectoryModel):
             "num_heads": 8,
             "context_encoder_type": "conv",  # conv, mlp, gap
         }
-
+        params = default_params | params
+        super().__init__(name, params)
         model_type = params.get("model_type", default_params["model_type"])
         context_encoder_type = params.get(
             "context_encoder_type", default_params["context_encoder_type"]
         )
-        if model_type == "Transformer":
-            layers = params.get("num_layers", 2)
-            hidden_dims = params.get("hidden_dims", 64)
-        else:
-            layers = params.get("num_layers", default_params["num_layers"])
-            hidden_dims = params.get("hidden_dims", default_params["hidden_dims"])
+
+        layers = params.get("num_layers", default_params["num_layers"])
+        hidden_dims = params.get("hidden_dims", default_params["hidden_dims"])
         config_paths.MODEL_PATH
         self.ckpt_dir = f"{config_paths.MODEL_PATH}/ckpts/{self.name}/"
 
@@ -266,6 +264,7 @@ class DiffusionModel(BaseTrajectoryModel):
             sigma=params.get("sigma", default_params["sigma"]),  # type: ignore
             T=prediction_length * dt,  # type: ignore
         )
+        self.nn_params = None
 
     def center_and_scale_data(self, trajectory: jnp.ndarray) -> jnp.ndarray:
         if len(trajectory.shape) == 2:
@@ -427,6 +426,7 @@ class DiffusionModel(BaseTrajectoryModel):
                 val_loss_list=val_loss_list,
                 std=self.std,
             )
+            self.nn_params = params
         return self
 
     def load_trained_model(self) -> None:
@@ -434,7 +434,7 @@ class DiffusionModel(BaseTrajectoryModel):
         trained_model = jnp.load(
             os.path.join(self.ckpt_dir, "final", "params.npz"), allow_pickle=True
         )
-        self.params = trained_model["params"].tolist()
+        self.nn_params = trained_model["params"].tolist()
         self.std = trained_model["std"]
 
     def predict(
@@ -442,7 +442,7 @@ class DiffusionModel(BaseTrajectoryModel):
         start_position: jnp.ndarray,
         times: jnp.ndarray,
         interpolator: Interpolator3D,
-        test_dataset: OceanTrainingDataset,
+        test_dataset: OceanDataset,
         num_samples: int = 1,
         key: random.PRNGKey = random.PRNGKey(0),
     ) -> jnp.ndarray:
@@ -486,7 +486,7 @@ class DiffusionModel(BaseTrajectoryModel):
             i: int,
         ) -> tuple[jnp.ndarray, jnp.ndarray]:
             denoised, denoised_steps = denoise(
-                self.params,
+                self.nn_params,
                 initial_y,
                 batch,
                 self.model,
@@ -639,3 +639,61 @@ class DiffusionModel(BaseTrajectoryModel):
             )
         pred_coords = jnp.concatenate(coords_denoised, axis=1)
         return pred_coords[:, 1:]
+    
+    def export_trained_model(self, model_name: str | None = None, export_path: str | None = None) -> None:
+        if model_name is None:
+            model_name = self.name
+        if export_path is None:
+            export_path = os.path.join(config_paths.MODEL_PATH, "trained_models")
+            
+        model_path = os.path.join(export_path, model_name)
+        if not os.path.exists(model_path):
+            os.makedirs(model_path)
+        else:
+            raise Exception(f"Model {model_name} already exists in {model_path}. Please delete it or change the model name.")
+        
+        with open(os.path.join(model_path, "model_config.yml"), "w") as f:
+            yaml.dump(self.params, f, default_flow_style=False)
+            
+        # save nn_params and std
+        nn_params_path = os.path.join(model_path, "nn_params.npz")
+        
+        if self.nn_params is None:
+            raise ValueError("Model parameters (nn_params) are None. Train or load the model before exporting.")
+        jnp.savez(nn_params_path, params=self.nn_params, std=self.std, allow_pickle=True)
+        
+    
+    @classmethod
+    def import_trained_model(cls, model_name: str, import_path: str|None) -> "DiffusionModel":
+        """
+        Imports a trained model from the specified path.
+
+        Args:
+            model_name (str): The name of the model to import.
+            model_path (str): The path where the model is stored.
+
+        Returns:
+            DiffusionModel: An instance of the DiffusionModel class with the loaded parameters.
+        """
+        if import_path is None:
+            import_path = os.path.join(config_paths.MODEL_PATH, "trained_models", model_name)
+        model_path = os.path.join(import_path, model_name)
+        config_file = os.path.join(model_path, "model_config.yml")
+        if not os.path.exists(config_file):
+            raise FileNotFoundError(f"Configuration file {config_file} does not exist.")
+        
+        with open(config_file, "r") as f:
+            model_config = yaml.safe_load(f)
+        
+        nn_params_path = os.path.join(model_path, "nn_params.npz")
+        if not os.path.exists(nn_params_path):
+            raise FileNotFoundError(f"NN parameters file {nn_params_path} does not exist.")
+        
+        nn_params = jnp.load(nn_params_path, allow_pickle=True)
+        
+        model = cls(model_name, model_config)
+        model.nn_params = nn_params["params"]
+        model.std = nn_params["std"]
+        
+        return model
+        
