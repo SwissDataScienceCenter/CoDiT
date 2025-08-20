@@ -322,6 +322,8 @@ class ConvNetModel(BaseTrajectoryModel):
         model_path = os.path.join(export_path, model_name)
         if not os.path.exists(model_path):
             os.makedirs(model_path)
+        else:
+            raise Exception(f"Model {model_name} already exists at {model_path}. Please delete it or change the model name.")
 
         #nn_params_path = os.path.join(model_path, "nn_params.npz")
         #jnp.savez(nn_params_path, params=self.nn_params, allow_pickle=True)
