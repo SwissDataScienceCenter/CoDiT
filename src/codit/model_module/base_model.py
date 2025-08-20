@@ -225,3 +225,37 @@ class BaseTrajectoryModel(ABC):
             NotImplementedError: This method must be implemented by subclasses.
         """
         pass
+    
+    @abstractmethod
+    def export_trained_model(self, model_name: str = None, export_path: str = None) -> None:
+        """
+        Exports the trained model to a specified path.
+
+        Args:
+            model_name (str): The name of the model to export. If None, uses the model's name.
+            export_path (str): The directory where the model will be exported. If None, uses a default path.
+
+        Raises:
+            ValueError: If the model parameters are not set.
+        """
+        pass
+    
+    @classmethod
+    @abstractmethod
+    def import_trained_model(cls, model_name: str, import_path: str | None) -> "BaseTrajectoryModel":
+        """
+        Imports a trained model from the specified path.
+
+        Args:
+            model_name (str): The name of the model to import.
+            import_path (str | None): The path from which to import the model. If None, uses a default path.
+
+        Returns:
+            BaseTrajectoryModel: An instance of the model with the loaded parameters.
+
+        Raises:
+            FileNotFoundError: If the configuration file or model file does not exist.
+            yaml.YAMLError: If there is an error parsing the YAML configuration file.
+            pickle.UnpicklingError: If there is an error unpickling the model file.
+        """
+        pass
