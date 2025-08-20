@@ -1,7 +1,0 @@
-LIB_PATH = "/workspaces/CodiT"
-DATA_PATH = f"{LIB_PATH}/data"
-CONFIG_PATH = f"{DATA_PATH}/configs"
-MODEL_PATH = f"{DATA_PATH}/models"
-RESULT_PATH = f"{DATA_PATH}/results"
-CREDENTIALS_PATH = f"{LIB_PATH}/src/config.ini"
-FIG_PATH = f"{DATA_PATH}/figs/"
