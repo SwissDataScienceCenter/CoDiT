@@ -88,7 +88,7 @@ class HistoryModule(nn.Module):
         x = nn.Dense(self.hidden_size)(x)
         x = nn.leaky_relu(x)
         for i in range(self.num_layers):
-            carry, x = nn.RNN(nn.GRUCell(self.hidden_size))(x)
+            x = nn.RNN(nn.GRUCell(self.hidden_size))(x)
         x = MLP(
             num_layers=1, hidden_size=self.hidden_size, output_size=self.output_size
         )(x[-1].flatten())
@@ -393,7 +393,7 @@ class Autoregressive_RNN(nn.Module):
     ) -> jnp.ndarray:
         for i in range(0, self.num_layers):
             x = jnp.concatenate([x, context], axis=-1)
-            carry, x = nn.RNN(nn.GRUCell(self.num_hidden))(x, initial_carry=initial_carry)
+            x = nn.RNN(nn.GRUCell(self.num_hidden))(x, initial_carry=initial_carry)
         return x
 
 
