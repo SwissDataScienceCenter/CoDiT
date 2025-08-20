@@ -5,7 +5,7 @@ import optax
 import orbax.checkpoint as ocp
 from flax import nnx
 from flax.training.early_stopping import EarlyStopping
-from interpax import Interpolator3D
+from interpax._spline import Interpolator3D
 from jax import numpy as jnp
 from jax import vmap
 from torch.utils import data
@@ -100,13 +100,13 @@ def load_checkpoint(model: nnx.Module, ckpt_dir: str) -> nnx.Module:
         item_names=("state", "opt_state"),
     ) as ckpt_mgr:
         graphdef, abstract_state = nnx.split(model)
-        rngs_key = jax.tree.map(jax.random.key_data, abstract_state.filter(nnx.RngKey))
-        merge_state(abstract_state, rngs_key)
+        rngs_key = jax.tree.map(jax.random.key_data, abstract_state.filter(nnx.RngKey)) # type: ignore
+        merge_state(abstract_state, rngs_key) # type: ignore
 
         restored = ckpt_mgr.restore(
             1,
             args=ocp.args.Composite(
-                state=ocp.args.StandardRestore(abstract_state),
+                state=ocp.args.StandardRestore(abstract_state), # type: ignore
             ),
         )
     state_restored = jax.device_put(restored["state"], jax.devices()[0])
@@ -177,11 +177,11 @@ class ConvNetModel(BaseTrajectoryModel):
                     vmap(data_transform.velocity_vector_from_pos_time, in_axes=(0, 0, None)),
                     in_axes=(0, 0, None),
                 )(trajectory[:, :-1], trajectory[:, 1:], 3600)
-                increment_prediction = vmap(model)(context[:, :-1])
+                increment_prediction = vmap(model)(context[:, :-1]) # type: ignore
                 return jnp.mean(jnp.pow(increment_prediction - true_increments, 2))
 
             loss, grad = nnx.value_and_grad(loss_fn)(model, trajectory, context)
-            optimizer = optimizer.update(grad)
+            optimizer = optimizer.update(grad) # type: ignore
             return loss
 
         @nnx.jit
@@ -193,7 +193,7 @@ class ConvNetModel(BaseTrajectoryModel):
                     vmap(data_transform.velocity_vector_from_pos_time, in_axes=(0, 0, None)),
                     in_axes=(0, 0, None),
                 )(trajectory[:, :-1], trajectory[:, 1:], 3600)
-                increment_prediction = vmap(model)(context[:, :-1])
+                increment_prediction = vmap(model)(context[:, :-1]) # type: ignore
                 return jnp.mean(jnp.pow(increment_prediction - true_increments, 2))
 
             loss = loss_fn(model)
@@ -217,15 +217,15 @@ class ConvNetModel(BaseTrajectoryModel):
                 item_names=("state", "opt_state"),
             ) as ckpt_mgr:
                 _, state = nnx.split(self.model)
-                rngs_key = jax.tree.map(jax.random.key_data, state.filter(nnx.RngKey))
-                merge_state(state, rngs_key)
+                rngs_key = jax.tree.map(jax.random.key_data, state.filter(nnx.RngKey)) # type: ignore
+                merge_state(state, rngs_key) # type: ignore
 
                 _, opt_state = nnx.split(optimizer.opt_state)
                 ckpt_mgr.save(
                     1,
                     args=ocp.args.Composite(
-                        state=ocp.args.StandardSave(state),
-                        opt_state=ocp.args.StandardSave(opt_state),
+                        state=ocp.args.StandardSave(state), # type: ignore
+                        opt_state=ocp.args.StandardSave(opt_state), # type: ignore
                     ),
                 )
             val_loss = 0
@@ -270,10 +270,10 @@ class ConvNetModel(BaseTrajectoryModel):
                 context = test_dataset.get_context(
                     jnp.array([t]), cur_coord, interpolator
                 )
-                pred_vel = model(context)
+                pred_vel = model(context) # type: ignore
                 speed, bearing = data_transform.velocity_to_distance_bearing(pred_vel[0])
                 new_coord = data_transform.inverse_haversine(
-                    cur_coord[0], 3600 * speed, bearing
+                    cur_coord[0], 3600 * speed, bearing     # type: ignore
                 )
                 return (
                     model,

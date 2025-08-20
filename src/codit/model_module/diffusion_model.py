@@ -12,7 +12,7 @@ import orbax.checkpoint as ocp
 import xarray as xr
 from flax import linen as nn
 from flax.training import orbax_utils
-from interpax import Interpolator3D
+from interpax._spline import Interpolator3D
 
 # %load_ext autoreload
 # %autoreload 2
@@ -22,7 +22,7 @@ from jax import jit, lax, random, vmap
 # jax.config.update('jax_platform_name', 'cpu')
 from jax import numpy as jnp
 from torch.utils import data
-from torch.utils.tensorboard import SummaryWriter
+from torch.utils.tensorboard.writer import SummaryWriter
 
 from codit.codit_module import (
     diffusion_models,
@@ -52,7 +52,7 @@ def backward_denoising_step(
     batch: dict,
     schedule_dict: dict,
     noise_model: WalkNoiseModel,
-    model: nn.module,
+    model: nn.Module,
     params: dict,
 ) -> tuple[tuple, jnp.ndarray]:
     """

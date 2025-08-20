@@ -2,22 +2,15 @@ import jax.numpy as jnp
 from flax import linen as nn
 from jax import random
 
+from codit.codit_module.brownian_noise_models import WalkNoiseModel
 
-def diffusion_step(
-    carry: tuple, beta: float, T: int, noise_model: nn.Module
-) -> tuple[tuple, tuple]:
-    key, y = carry
-    key, subkey = random.split(key)
-    B, noise_x = noise_model(key=subkey, T=T)
-    y = jnp.sqrt(1 - beta) * y + jnp.sqrt(beta) * B
-    return (key, y), (y[:, :], noise_x[:, :])
 
 def diffusion_jump(
     key: random.PRNGKey,
     y: jnp.ndarray,
-    k: int,
+    k: int | jnp.ndarray,
     alpha_bar: jnp.ndarray,
-    noise_model: nn.Module,
+    noise_model: WalkNoiseModel,
 ) -> tuple[jnp.ndarray, jnp.ndarray]:
     """
     Perform a jump in the diffusion process.
@@ -45,7 +38,7 @@ def forward_diffusion(
     k: jnp.ndarray,
     key: random.PRNGKey,
     schedule_dict: dict,
-    noise_model: nn.Module,
+    noise_model: WalkNoiseModel,
 ) -> tuple[jnp.ndarray, jnp.ndarray]:
     """
     Perform a forward diffusion step.

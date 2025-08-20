@@ -10,51 +10,14 @@ from flax.training.early_stopping import EarlyStopping
 from jax import jit, random
 from orbax.checkpoint import CheckpointManager
 from torch.utils.data import DataLoader
-from torch.utils.tensorboard import SummaryWriter
+from torch.utils.tensorboard.writer import SummaryWriter
 
 # import jax_dataloader as jdl
 from tqdm import tqdm
 
 from codit.codit_module import noising_functions
+from codit.codit_module.brownian_noise_models import WalkNoiseModel
 from codit.data_module import data_transform
-
-##### Features stuff #####
-
-
-# def get_time_embedding(s: pd.Series, freq: str) -> np.ndarray:
-#     features = {
-#         "ME": ["weekofyear"],
-#         "w": ["daysinmonth", "weekofyear"],
-#         "d": ["dayofweek"],
-#         "D": ["dayofweek"],
-#         "B": ["dayofweek", "dayofyear"],
-#         "h": ["hour", "dayofweek"],
-#         "H": ["hour", "dayofweek"],
-#         "min": ["minute", "hour", "dayofweek"],
-#         "30min": ["hour", "dayofweek"],
-#     }
-#     max_values = {
-#         "weekofyear": 52,
-#         "daysinmonth": 31,
-#         "dayofweek": 7,
-#         "dayofyear": 365,
-#         "hour": 24,
-#         "min": 60,
-#         "30min": 48,
-#     }
-#     attr = s.index.freqstr
-#     time_features = features[attr]
-#     feat = np.zeros((len(s), len(time_features) * 2))
-#     for ifeat, feature in enumerate(time_features):
-#         if feature == "weekofyear":
-#             attribute = s.index.isocalendar().week.to_numpy()
-#         else:
-#             attribute = getattr(s.index, feature).to_numpy()
-#         x = 2 * np.pi * attribute / max_values[feature]
-#         feat[:, ifeat * 2] = np.sin(x)
-#         feat[:, ifeat * 2 + 1] = np.cos(x)
-#     return feat
-
 
 ##### Model stuff #####
 
@@ -125,7 +88,7 @@ class HistoryModule(nn.Module):
         x = nn.Dense(self.hidden_size)(x)
         x = nn.leaky_relu(x)
         for i in range(self.num_layers):
-            x = nn.RNN(nn.GRUCell(self.hidden_size))(x)
+            carry, x = nn.RNN(nn.GRUCell(self.hidden_size))(x)
         x = MLP(
             num_layers=1, hidden_size=self.hidden_size, output_size=self.output_size
         )(x[-1].flatten())
@@ -426,11 +389,11 @@ class Autoregressive_RNN(nn.Module):
 
     @nn.compact
     def __call__(
-        self, x: jnp.ndarray, context: jnp.ndarray, initial_carry: jnp.ndarray = None
+        self, x: jnp.ndarray, context: jnp.ndarray, initial_carry: jnp.ndarray | None = None
     ) -> jnp.ndarray:
         for i in range(0, self.num_layers):
             x = jnp.concatenate([x, context], axis=-1)
-            x = nn.RNN(nn.GRUCell(self.num_hidden))(x, initial_carry=initial_carry)
+            carry, x = nn.RNN(nn.GRUCell(self.num_hidden))(x, initial_carry=initial_carry)
         return x
 
 
@@ -625,7 +588,7 @@ def train(
     val_dataloader: Optional[DataLoader] = None,
     val_loss_list: list = [],
     early_stopping_kwargs: dict = {"patience": 30, "min_delta": 1e-4},
-    writer: SummaryWriter = None,
+    writer: SummaryWriter | None = None,
     std: float = 1.0,
 ) -> tuple:
 
@@ -720,7 +683,7 @@ def denoising_loss(
     k: jnp.ndarray,
     key: random.PRNGKey,
     schedule_dict: dict,
-    noise_model: nn.Module,
+    noise_model: WalkNoiseModel,
 ) -> jnp.ndarray:
     """
     The denoising loss function.
