@@ -21,8 +21,8 @@ class OceanDataset(Dataset):
         self,
         config: dict,
         length: int,
-        num_grid_points: int,
-        delta_metres: int,
+        num_grid_points: int = 16,
+        delta_metres: int = 10000,
         interp_method: str = "linear",
         no_context: bool = False,
     ):

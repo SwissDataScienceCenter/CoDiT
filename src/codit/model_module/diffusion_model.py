@@ -1,3 +1,4 @@
+import datetime
 import os
 import pickle
 import shutil
@@ -447,16 +448,19 @@ class DiffusionModel(BaseTrajectoryModel):
         self.nn_params = trained_model["params"]
         self.std = trained_model["std"]
 
+
     def predict(
         self,
-        start_position: jnp.ndarray,
-        times: jnp.ndarray,
+        start_position: jax.Array,
+        start_time: datetime.datetime,
+        prediction_length: int,
         interpolator: Interpolator3D,
         test_dataset: OceanDataset,
         num_samples: int = 1,
         key: jax.Array = random.PRNGKey(0),
     ) -> jnp.ndarray:
 
+        times = self._get_prediction_steps(start_time, prediction_length)
         prediction_length = len(times) - 1
         start_context = test_dataset.get_context(
             times[:1], start_position[None], interpolator

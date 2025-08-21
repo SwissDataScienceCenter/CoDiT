@@ -1,11 +1,14 @@
+import datetime
 import os
 import pickle as pkl
 from abc import ABC, abstractmethod
 
+import numpy as np
 import yaml
 from interpax._spline import Interpolator3D
 from jax import numpy as jnp
 
+from codit.data_module import utils
 from codit.data_module.dataset import OceanDataset, OceanTrainingDataset
 
 
@@ -202,11 +205,24 @@ class BaseTrajectoryModel(ABC):
             model = pkl.load(f)
         return model, model_config
 
+    @staticmethod
+    def _get_prediction_steps(start_time: datetime.datetime, prediction_length: int) -> jnp.ndarray:
+        # Generate an array of prediction steps based on the start time and prediction length
+        times = np.arange(
+            start_time,
+            start_time + datetime.timedelta(hours=prediction_length+1),
+            datetime.timedelta(hours=1),
+            dtype=np.datetime64,
+        )
+        times = jnp.array(utils.convert_date_to_hours(times), dtype=jnp.float32)
+        return times
+    
     @abstractmethod
     def predict(
         self,
         start_position: jnp.ndarray,
-        times: jnp.ndarray,
+        start_time: datetime.datetime,
+        prediction_length: int,
         interpolator: Interpolator3D,
         test_dataset: OceanDataset,
         num_samples: int = 1,

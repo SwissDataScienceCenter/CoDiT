@@ -1,3 +1,4 @@
+import datetime
 import os
 import pickle
 
@@ -251,11 +252,14 @@ class ConvNetModel(BaseTrajectoryModel):
     def predict(
         self,
         start_position: jnp.ndarray,
-        times: jnp.ndarray,
+        start_time: datetime.datetime,
+        prediction_length: int,
         interpolator: Interpolator3D,
         test_dataset: OceanDataset,
         num_samples: int = 1,
     ) -> jnp.ndarray:
+        
+        times = self._get_prediction_steps(start_time, prediction_length)
         num_preds = num_samples
         cur_coord = jnp.array([start_position])
         cur_coord = jnp.repeat(cur_coord, num_preds, axis=0)

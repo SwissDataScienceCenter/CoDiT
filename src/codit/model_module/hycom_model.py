@@ -1,3 +1,5 @@
+import datetime
+
 from flax import linen as nn
 from flax.core import FrozenDict
 from interpax._spline import Interpolator3D
@@ -72,12 +74,14 @@ class HycomModel(BaseTrajectoryModel):
     def predict(
         self,
         start_position: jnp.ndarray,
-        times: jnp.ndarray,
+        start_time: datetime.datetime,
+        prediction_length: int,
         interpolator: Interpolator3D,
         test_dataset: OceanDataset,
         **kwargs: dict
     ) -> jnp.ndarray:
 
+        times = self._get_prediction_steps(start_time, prediction_length)
         x_pred = predict_trajectory({}, self.model, start_position, times, interpolator)
 
         pred_coords = x_pred[None]
