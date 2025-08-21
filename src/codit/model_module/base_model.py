@@ -3,7 +3,7 @@ import pickle as pkl
 from abc import ABC, abstractmethod
 
 import yaml
-from interpax import Interpolator3D
+from interpax._spline import Interpolator3D
 from jax import numpy as jnp
 
 from codit.data_module.dataset import OceanDataset, OceanTrainingDataset
@@ -227,7 +227,7 @@ class BaseTrajectoryModel(ABC):
         pass
     
     @abstractmethod
-    def export_trained_model(self, model_name: str = None, export_path: str = None) -> None:
+    def export_trained_model(self, model_name: str | None = None, export_path: str | None = None) -> None:
         """
         Exports the trained model to a specified path.
 

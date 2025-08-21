@@ -6,7 +6,7 @@ import jax
 import numpy as np
 import pandas as pd
 import xarray as xr
-from interpax import Interpolator3D
+from interpax._spline import Interpolator3D
 from jax import numpy as jnp
 from jax import vmap
 from torch.utils.data import Dataset

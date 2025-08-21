@@ -1,5 +1,4 @@
 import os
-import yaml
 import pickle
 import shutil
 import warnings
@@ -7,17 +6,17 @@ import warnings
 # Suppress the SerializationWarning
 from functools import partial
 
+import jax
 import numpy as np
 import optax
 import orbax.checkpoint
 import orbax.checkpoint as ocp
 import xarray as xr
+import yaml
 from flax import linen as nn
+from flax.core import FrozenDict
 from flax.training import orbax_utils
 from interpax._spline import Interpolator3D
-
-# %load_ext autoreload
-# %autoreload 2
 from jax import jit, lax, random, vmap
 
 # only use cpu
@@ -37,7 +36,7 @@ from codit.codit_module.brownian_noise_models import (
 
 # Suppress the SerializationWarning
 from codit.data_module import config_paths, data_transform
-from codit.data_module.dataset import OceanTrainingDataset, OceanDataset
+from codit.data_module.dataset import OceanDataset, OceanTrainingDataset
 from codit.model_module.base_model import BaseTrajectoryModel
 
 warnings.filterwarnings("ignore", category=xr.SerializationWarning)
@@ -55,7 +54,7 @@ def backward_denoising_step(
     schedule_dict: dict,
     noise_model: WalkNoiseModel,
     model: nn.Module,
-    params: dict,
+    params: FrozenDict | dict,
 ) -> tuple[tuple, jnp.ndarray]:
     """
     A single step of the backward denoising algorithm.
@@ -96,6 +95,7 @@ def backward_denoising_step(
     y_proj_history = y_noised_history
     y_proj_history = y_proj_history[..., ::-1, :]
     noise_pred = model.apply(params, y_proj[1:], y_proj_history, batch, k)
+    assert isinstance(noise_pred, jnp.ndarray), "Model output is not a jnp.ndarray"
     W_pred = noise_model.transform(noise_pred)
     mu_pred = y / jnp.sqrt(1 - beta_tmp)
     mu_pred -= beta_tmp / (jnp.sqrt(1 - alpha_bar_tmp) * jnp.sqrt(alpha_tmp)) * W_pred
@@ -111,13 +111,13 @@ def backward_denoising_step(
 
 
 def denoise(
-    params: dict,
+    params: FrozenDict | dict,
     y_init: jnp.ndarray,
     batch: dict,
-    model: nn.module,
+    model: nn.Module,
     W: jnp.ndarray,
     noise_model: WalkNoiseModel,
-    key: random.PRNGKey,
+    key: jax.Array,
     schedule_dict: dict,
 ) -> tuple[jnp.ndarray, jnp.ndarray]:
     """
@@ -151,7 +151,7 @@ def denoise(
     # step_func = lambda carry, i: backward_denoising_step(
     #     carry, i, W, batch, schedule_dict, noise_model, model, params
     # )
-    denoise_results = lax.scan(step_func, init, iterations)
+    denoise_results = lax.scan(step_func, init, iterations) # type: ignore
     y = denoise_results[0][1]
     denoising_steps = denoise_results[1]
     return y, denoising_steps
@@ -311,11 +311,15 @@ class DiffusionModel(BaseTrajectoryModel):
         # todo: This is not very nice, should happen in the dataset or more downstream
         def transform_traj_to_metre(traj: jnp.ndarray) -> jnp.ndarray:
             velocity_vectors = vmap(
-                jax_transform.velocity_vector_from_pos_time, in_axes=(None, 0, None)
+                data_transform.velocity_vector_from_pos_time, in_axes=(None, 0, None)
             )(traj[0], traj, 3600)
             traj_in_metres = velocity_vectors * 3600
             return traj_in_metres
 
+        assert isinstance(train_dataset.trajectories, jnp.ndarray), (
+            "Trajectories should be a jnp.ndarray, "
+            "but got: {}".format(type(train_dataset.trajectories))
+        )
         traj_in_metres = vmap(transform_traj_to_metre)(train_dataset.trajectories)
         self.std = jnp.std(traj_in_metres[:, -1], axis=0)
 
@@ -338,6 +342,10 @@ class DiffusionModel(BaseTrajectoryModel):
             os.makedirs(log_path)
         writer = SummaryWriter(log_dir=log_path)
         data_sample = train_dataset[0]
+        assert isinstance(data_sample[0], jnp.ndarray), (
+            "Data sample should be a jnp.ndarray, "
+            "but got: {}".format(type(data_sample[0]))
+        )
         trajectory = self.center_and_scale_data(data_sample[0])
         y = trajectory[1:]
         y_hist = trajectory[:1]
@@ -436,7 +444,7 @@ class DiffusionModel(BaseTrajectoryModel):
         trained_model = jnp.load(
             os.path.join(self.ckpt_dir, "final", "params.npz"), allow_pickle=True
         )
-        self.nn_params = trained_model["params"].tolist()
+        self.nn_params = trained_model["params"]
         self.std = trained_model["std"]
 
     def predict(
@@ -446,7 +454,7 @@ class DiffusionModel(BaseTrajectoryModel):
         interpolator: Interpolator3D,
         test_dataset: OceanDataset,
         num_samples: int = 1,
-        key: random.PRNGKey = random.PRNGKey(0),
+        key: jax.Array = random.PRNGKey(0),
     ) -> jnp.ndarray:
 
         prediction_length = len(times) - 1
@@ -465,7 +473,7 @@ class DiffusionModel(BaseTrajectoryModel):
         keys = random.split(key, num_samples + 1)
         key, subkeys = keys[0], keys[1:]
 
-        def get_noise_model(key: random.PRNGKey, prediction_length: int) -> jnp.ndarray:
+        def get_noise_model(key: jax.Array, prediction_length: int) -> tuple[jnp.ndarray, jnp.ndarray]:
             keys = random.split(key, K + 1)
             key, subkeys = keys[0], keys[1:]
             return vmap(self.noise_model, in_axes=(0, None))(subkeys, prediction_length)
@@ -480,7 +488,7 @@ class DiffusionModel(BaseTrajectoryModel):
 
         @partial(vmap, in_axes=(0, 0, 0, 0, None, None))
         def get_denoised_trajectory(
-            key: random.PRNGKey,
+            key: jax.Array,
             W: jnp.ndarray,
             initial_y: jnp.ndarray,
             batch: dict,
@@ -488,7 +496,7 @@ class DiffusionModel(BaseTrajectoryModel):
             i: int,
         ) -> tuple[jnp.ndarray, jnp.ndarray]:
             denoised, denoised_steps = denoise(
-                self.nn_params,
+                self.nn_params,  # type: ignore
                 initial_y,
                 batch,
                 self.model,
@@ -539,108 +547,108 @@ class DiffusionModel(BaseTrajectoryModel):
         pred_coords = jnp.concatenate(coords_denoised, axis=1)
         return pred_coords[:, 1:]
 
-    def predict_steps(
-        self,
-        start_position: jnp.ndarray,
-        times: jnp.ndarray,
-        interpolator: Interpolator3D,
-        test_dataset: OceanTrainingDataset,
-        num_samples: int = 1,
-        key: random.PRNGKey = random.PRNGKey(0),
-    ) -> jnp.ndarray:
+    # def predict_steps(
+    #     self,
+    #     start_position: jnp.ndarray,
+    #     times: jnp.ndarray,
+    #     interpolator: Interpolator3D,
+    #     test_dataset: OceanTrainingDataset,
+    #     num_samples: int = 1,
+    #     key: random.PRNGKey = random.PRNGKey(0),
+    # ) -> jnp.ndarray:
 
-        prediction_length = len(times) - 1
-        start_context = test_dataset.get_context(
-            times[:1], start_position[None], interpolator
-        )
-        coords_denoised = [start_position]
-        key, subkey = random.split(key)
-        K = self.schedule_dict["K"]
-        batch = {
-            "history_target_vals": jnp.zeros((1, 2)),
-            "history_context": start_context,
-            "prediction_context": start_context[None],
-        }
-        keys = random.split(key, num_samples + 1)
-        key, subkeys = keys[0], keys[1:]
+    #     prediction_length = len(times) - 1
+    #     start_context = test_dataset.get_context(
+    #         times[:1], start_position[None], interpolator
+    #     )
+    #     coords_denoised = [start_position]
+    #     key, subkey = random.split(key)
+    #     K = self.schedule_dict["K"]
+    #     batch = {
+    #         "history_target_vals": jnp.zeros((1, 2)),
+    #         "history_context": start_context,
+    #         "prediction_context": start_context[None],
+    #     }
+    #     keys = random.split(key, num_samples + 1)
+    #     key, subkeys = keys[0], keys[1:]
 
-        def get_noise_model(key: random.PRNGKey, prediction_length: int) -> jnp.ndarray:
-            keys = random.split(key, K + 1)
-            key, subkeys = keys[0], keys[1:]
-            return vmap(self.noise_model, in_axes=(0, None))(subkeys, prediction_length)
+    #     def get_noise_model(key: random.PRNGKey, prediction_length: int) -> jnp.ndarray:
+    #         keys = random.split(key, K + 1)
+    #         key, subkeys = keys[0], keys[1:]
+    #         return vmap(self.noise_model, in_axes=(0, None))(subkeys, prediction_length)
 
-        W, dW = vmap(get_noise_model, in_axes=(0, None))(subkeys, prediction_length)
-        # traj_samples = []
-        # denoising_steps = []
-        coords_denoised = [jnp.tile(start_position[None], (num_samples, 1, 1))]
-        keys = random.split(key, num_samples + 1)
-        key, subkeys = keys[0], keys[1:]
-        initial_y, _ = vmap(self.noise_model, in_axes=(0, None))(
-            subkeys, prediction_length
-        )
+    #     W, dW = vmap(get_noise_model, in_axes=(0, None))(subkeys, prediction_length)
+    #     # traj_samples = []
+    #     # denoising_steps = []
+    #     coords_denoised = [jnp.tile(start_position[None], (num_samples, 1, 1))]
+    #     keys = random.split(key, num_samples + 1)
+    #     key, subkeys = keys[0], keys[1:]
+    #     initial_y, _ = vmap(self.noise_model, in_axes=(0, None))(
+    #         subkeys, prediction_length
+    #     )
 
-        @partial(vmap, in_axes=(0, 0, 0, 0, None, None))
-        def get_denoised_trajectory(
-            key: random.PRNGKey,
-            W: jnp.ndarray,
-            initial_y: jnp.ndarray,
-            batch: dict,
-            numeric_time: jnp.ndarray,
-            i: int,
-        ) -> tuple[jnp.ndarray, jnp.ndarray]:
-            denoised, denoised_steps = denoise(
-                self.params,
-                initial_y,
-                batch,
-                self.model,
-                W,
-                self.noise_model,
-                key,
-                self.schedule_dict,
-            )
-            denoised_scaled = denoised_steps * self.std
-            distance_in_metres = jnp.sqrt(
-                denoised_scaled[:, :, 0] ** 2 + denoised_scaled[:, :, 1] ** 2
-            )
-            bearing_angle = jnp.arctan2(
-                denoised_scaled[:, :, 1], denoised_scaled[:, :, 0]
-            )
-            bearing_angle = jnp.degrees(bearing_angle)
-            dcoord = data_transform.inverse_haversine_grad(
-                start_position, distance_in_metres[i], bearing_angle[i]
-            )
-            new_coord = start_position[None] + dcoord
-            new_context = test_dataset.get_context(
-                numeric_time, new_coord, interpolator
-            )
-            return new_coord, new_context
+    #     @partial(vmap, in_axes=(0, 0, 0, 0, None, None))
+    #     def get_denoised_trajectory(
+    #         key: jax.Array,
+    #         W: jnp.ndarray,
+    #         initial_y: jnp.ndarray,
+    #         batch: dict,
+    #         numeric_time: jnp.ndarray,
+    #         i: int,
+    #     ) -> tuple[jnp.ndarray, jnp.ndarray]:
+    #         denoised, denoised_steps = denoise(
+    #             self.params,
+    #             initial_y,
+    #             batch,
+    #             self.model,
+    #             W,
+    #             self.noise_model,
+    #             key,
+    #             self.schedule_dict,
+    #         )
+    #         denoised_scaled = denoised_steps * self.std
+    #         distance_in_metres = jnp.sqrt(
+    #             denoised_scaled[:, :, 0] ** 2 + denoised_scaled[:, :, 1] ** 2
+    #         )
+    #         bearing_angle = jnp.arctan2(
+    #             denoised_scaled[:, :, 1], denoised_scaled[:, :, 0]
+    #         )
+    #         bearing_angle = jnp.degrees(bearing_angle)
+    #         dcoord = data_transform.inverse_haversine_grad(
+    #             start_position, distance_in_metres[i], bearing_angle[i]
+    #         )
+    #         new_coord = start_position[None] + dcoord
+    #         new_context = test_dataset.get_context(
+    #             numeric_time, new_coord, interpolator
+    #         )
+    #         return new_coord, new_context
 
-        keys = random.split(key, num_samples + 1)
-        key, subkeys = keys[0], keys[1:]
-        coords_denoised = [jnp.tile(start_position[None], (num_samples, 1, 1))]
-        batch = {
-            "history_target_vals": jnp.zeros((num_samples, 1, 2)),
-            "history_context": jnp.tile(start_context[None], (num_samples, 1, 1, 1, 1)),
-            "prediction_context": jnp.tile(
-                start_context[None], (num_samples, prediction_length, 1, 1, 1)
-            ),
-        }
+    #     keys = random.split(key, num_samples + 1)
+    #     key, subkeys = keys[0], keys[1:]
+    #     coords_denoised = [jnp.tile(start_position[None], (num_samples, 1, 1))]
+    #     batch = {
+    #         "history_target_vals": jnp.zeros((num_samples, 1, 2)),
+    #         "history_context": jnp.tile(start_context[None], (num_samples, 1, 1, 1, 1)),
+    #         "prediction_context": jnp.tile(
+    #             start_context[None], (num_samples, prediction_length, 1, 1, 1)
+    #         ),
+    #     }
 
-        denoise_func = jit(get_denoised_trajectory)
-        for i in range(1, prediction_length + 1):
-            new_coord, new_context = denoise_func(
-                subkeys, W, initial_y, batch, times[i : i + 1], i
-            )
-            coords_denoised.append(new_coord)
-            batch["prediction_context"] = (
-                batch["prediction_context"].at[:, i : i + 1].set(new_context)
-            )  # jnp.concatenate([batch['prediction_context'], new_context], axis=1)
-            batch["history_target_vals"] = jnp.zeros((num_samples, 1, 2))
-            batch["history_context"] = jnp.tile(
-                start_context[None], (num_samples, 1, 1, 1, 1)
-            )
-        pred_coords = jnp.concatenate(coords_denoised, axis=1)
-        return pred_coords[:, 1:]
+    #     denoise_func = jit(get_denoised_trajectory)
+    #     for i in range(1, prediction_length + 1):
+    #         new_coord, new_context = denoise_func(
+    #             subkeys, W, initial_y, batch, times[i : i + 1], i
+    #         )
+    #         coords_denoised.append(new_coord)
+    #         batch["prediction_context"] = (
+    #             batch["prediction_context"].at[:, i : i + 1].set(new_context)
+    #         )  # jnp.concatenate([batch['prediction_context'], new_context], axis=1)
+    #         batch["history_target_vals"] = jnp.zeros((num_samples, 1, 2))
+    #         batch["history_context"] = jnp.tile(
+    #             start_context[None], (num_samples, 1, 1, 1, 1)
+    #         )
+    #     pred_coords = jnp.concatenate(coords_denoised, axis=1)
+    #     return pred_coords[:, 1:]
     
     def export_trained_model(self, model_name: str | None = None, export_path: str | None = None) -> None:
         if model_name is None:
@@ -697,6 +705,7 @@ class DiffusionModel(BaseTrajectoryModel):
             nn_params = pickle.load(f)
             
         model = cls(model_name, model_config)
+        assert isinstance(nn_params, dict), "Loaded nn_params should be a dictionary."
         model.nn_params = nn_params["params"]
         model.std = nn_params["std"]
         

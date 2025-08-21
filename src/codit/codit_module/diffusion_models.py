@@ -1,11 +1,12 @@
 from functools import partial
-from typing import Optional
+from typing import Any, Optional
 
 import jax
 import jax.numpy as jnp
 import optax
 import orbax.checkpoint as ocp
 from flax import linen as nn
+from flax.core import FrozenDict
 from flax.training.early_stopping import EarlyStopping
 from jax import jit, random
 from orbax.checkpoint import CheckpointManager
@@ -88,7 +89,7 @@ class HistoryModule(nn.Module):
         x = nn.Dense(self.hidden_size)(x)
         x = nn.leaky_relu(x)
         for i in range(self.num_layers):
-            x = nn.RNN(nn.GRUCell(self.hidden_size))(x)
+            x = nn.RNN(nn.GRUCell(self.hidden_size))(x)  # type: ignore
         x = MLP(
             num_layers=1, hidden_size=self.hidden_size, output_size=self.output_size
         )(x[-1].flatten())
@@ -393,7 +394,7 @@ class Autoregressive_RNN(nn.Module):
     ) -> jnp.ndarray:
         for i in range(0, self.num_layers):
             x = jnp.concatenate([x, context], axis=-1)
-            x = nn.RNN(nn.GRUCell(self.num_hidden))(x, initial_carry=initial_carry)
+            x = nn.RNN(nn.GRUCell(self.num_hidden))(x, initial_carry=initial_carry) # type: ignore
         return x
 
 
@@ -509,7 +510,7 @@ def transform_traj_to_metre(traj: jnp.ndarray) -> jnp.ndarray:
     return traj_in_metres
 
 
-def transform_batch(torch_batch: tuple, std: float) -> dict:
+def transform_batch(torch_batch: tuple, std: float | jnp.ndarray) -> dict:
     trajectory = jnp.asarray(torch_batch[0])
     traj_in_metres = jax.vmap(transform_traj_to_metre)(trajectory)
     trajectory = traj_in_metres / std
@@ -531,7 +532,7 @@ def train_step(
     carry: tuple,
     batch: dict,
     model: nn.Module,
-    noise_model: nn.Module,
+    noise_model: WalkNoiseModel,
     optimizer: optax.GradientTransformation,
     schedule_dict: dict,
     K: int,
@@ -555,7 +556,7 @@ def get_loss(
     carry: tuple,
     batch: dict,
     model: nn.Module,
-    noise_model: nn.Module,
+    noise_model: WalkNoiseModel,
     schedule_dict: dict,
     K: int,
     batch_size: int,
@@ -576,10 +577,10 @@ def train(
     train_dataloader: DataLoader,
     optimizer: optax.GradientTransformation,
     model: nn.Module,
-    noise_model: nn.Module,
-    params: dict,
+    noise_model: WalkNoiseModel,
+    params: dict | FrozenDict,
     opt_state: optax.OptState,
-    key: random.PRNGKey,
+    key: jax.Array,
     schedule_dict: dict,
     num_epochs: int = 100,
     num_batches_per_epoch: int = 100,
@@ -589,11 +590,14 @@ def train(
     val_loss_list: list = [],
     early_stopping_kwargs: dict = {"patience": 30, "min_delta": 1e-4},
     writer: SummaryWriter | None = None,
-    std: float = 1.0,
+    std: float | jnp.ndarray = 1.0,
 ) -> tuple:
 
+    
+    
     @jit
     def step_func(carry: tuple, batch: dict) -> tuple:
+        assert isinstance(train_dataloader.batch_size, int), "Batch size must be an integer."
         return train_step(
             carry,
             batch,
@@ -609,6 +613,7 @@ def train(
 
         @jit
         def get_loss_func(carry: tuple, batch: dict) -> tuple:
+            assert isinstance(val_dataloader.batch_size, int), "Batch size must be an integer."
             return get_loss(
                 carry,
                 batch,
@@ -624,6 +629,8 @@ def train(
     val_loss = jnp.nan
     # progress bar with losses
     pbar = tqdm(total=num_epochs, desc="Training", dynamic_ncols=True)
+    assert isinstance(train_dataloader.batch_size, int), "Batch size must be an integer."
+
     for epoch in range(num_epochs):
         carry = (params, opt_state, key, 0)
         ibatch = 0
@@ -640,6 +647,7 @@ def train(
         )
         loss_log = {"loss": loss_list[-1]}
         if val_dataloader is not None:
+            assert isinstance(val_dataloader.batch_size, int), "Batch size must be an integer."
             carry = (params, opt_state, key, 0)
             for batch in val_dataloader:
                 # batch.pop('forecast_start')
@@ -661,7 +669,7 @@ def train(
                 "key": key,
                 "epoch": epoch,
             }
-            checkpoint_mngr.save(epoch, args=ocp.args.StandardSave(ckpt))
+            checkpoint_mngr.save(epoch, args=ocp.args.StandardSave(ckpt)) # type: ignore
         if early_stop.should_stop:
             print(f"Early stopping at epoch {epoch}")
             break
@@ -677,11 +685,11 @@ def train(
 @partial(jax.jit, static_argnums=(1, 6))
 @jax.value_and_grad
 def denoising_loss(
-    params: dict,
+    params: FrozenDict,
     model: nn.Module,
     batch: dict,
     k: jnp.ndarray,
-    key: random.PRNGKey,
+    key: jax.Array,
     schedule_dict: dict,
     noise_model: WalkNoiseModel,
 ) -> jnp.ndarray:

@@ -1,3 +1,4 @@
+import jax
 import jax.numpy as jnp
 from flax import linen as nn
 from jax import random
@@ -6,7 +7,7 @@ from codit.codit_module.brownian_noise_models import WalkNoiseModel
 
 
 def diffusion_jump(
-    key: random.PRNGKey,
+    key: jax.Array,
     y: jnp.ndarray,
     k: int | jnp.ndarray,
     alpha_bar: jnp.ndarray,
@@ -36,7 +37,7 @@ def diffusion_jump(
 def forward_diffusion(
     y: jnp.ndarray,
     k: jnp.ndarray,
-    key: random.PRNGKey,
+    key: jax.Array,
     schedule_dict: dict,
     noise_model: WalkNoiseModel,
 ) -> tuple[jnp.ndarray, jnp.ndarray]:

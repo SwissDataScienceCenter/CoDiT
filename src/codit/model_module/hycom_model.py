@@ -1,15 +1,16 @@
 from flax import linen as nn
-from interpax import Interpolator3D
+from flax.core import FrozenDict
+from interpax._spline import Interpolator3D
 from jax import lax
 from jax import numpy as jnp
 
-from codit.data_module.dataset import OceanDataset
 from codit.data_module import data_transform
+from codit.data_module.dataset import OceanDataset
 from codit.model_module.base_model import BaseTrajectoryModel
 
 
 class HycomDriftDynamics(nn.Module):
-
+    
     @nn.compact
     def __call__(
         self, x: jnp.ndarray, t: jnp.ndarray, interpolator: Interpolator3D, dt: float
@@ -21,8 +22,8 @@ class HycomDriftDynamics(nn.Module):
 
 
 def predict_trajectory(
-    params: dict,
-    model: nn.Module,
+    params: dict | FrozenDict,
+    model: HycomDriftDynamics,
     x0: jnp.ndarray,
     t: jnp.ndarray,
     inputs: Interpolator3D,
@@ -30,7 +31,7 @@ def predict_trajectory(
     dt = (t[1] - t[0]) * 3600
 
     def dynamics(x: jnp.ndarray, t: jnp.ndarray) -> jnp.ndarray:
-        return model.apply(params, x, t, inputs, dt)
+        return model.apply(params, x, t, inputs, dt) # type: ignore
 
     def scan_fun(carry: tuple, t: jnp.ndarray) -> tuple:
         x, v = carry

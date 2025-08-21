@@ -13,8 +13,7 @@ import xarray as xr
 from jax import numpy as jnp
 from jax import vmap
 
-from codit.data_module import config_paths
-from codit.data_module import data_transform
+from codit.data_module import config_paths, data_transform
 
 logging.basicConfig(level=logging.INFO)
 

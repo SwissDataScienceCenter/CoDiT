@@ -2,10 +2,11 @@ from flax import linen as nn
 from flax import struct
 from jax import lax, random
 from jax import numpy as jnp
+import jax
 
 
 def sample_white_noise(
-    key: random.PRNGKey, num_dims: int, time_steps: int, dt: float, sigma: float
+    key: jax.Array, num_dims: int, time_steps: int, dt: float, sigma: float
 ) -> tuple[jnp.ndarray, jnp.ndarray]:
     """
     Sample a Brownian motion.
@@ -101,7 +102,7 @@ def make_ou_bridge(
 
 
 def sample_brownian_motion(
-    key: random.PRNGKey, num_dims: int, time_steps: int, dt: float, sigma: float
+    key: jax.Array, num_dims: int, time_steps: int, dt: float, sigma: float
 ) -> tuple[jnp.ndarray, jnp.ndarray]:
     """
     Sample a Brownian motion.
@@ -124,7 +125,7 @@ def sample_brownian_motion(
 
 
 def sample_ou_motion(
-    key: random.PRNGKey,
+    key: jax.Array,
     num_dims: int,
     time_steps: int,
     dt: float,
@@ -153,7 +154,7 @@ def sample_ou_motion(
 
 
 def sample_brownian_bridge(
-    key: random.PRNGKey, num_dims: int, time_steps: int, dt: float, sigma: float
+    key: jax.Array, num_dims: int, time_steps: int, dt: float, sigma: float
 ) -> tuple[jnp.ndarray, jnp.ndarray]:
     """
     Sample a Brownian bridge.
@@ -176,7 +177,7 @@ def sample_brownian_bridge(
 
 
 def sample_ou_bridge(
-    key: random.PRNGKey,
+    key: jax.Array,
     num_dims: int,
     T: float,
     dt: float,
@@ -214,7 +215,7 @@ class WalkNoiseModel:
     T: float
 
     def __call__(
-        self, key: random.PRNGKey, time_steps: int
+        self, key: jax.Array, time_steps: int
     ) -> tuple[jnp.ndarray, jnp.ndarray]:
         """
         Generate a Brownian motion or bridge.
@@ -316,10 +317,10 @@ class BrownianNoiseModel(nn.Module):
     num_dims: int
     dt: float
     sigma: float
-    Cov: jnp.ndarray = None
+    Cov: jnp.ndarray | None= None
 
     @nn.compact
-    def __call__(self, key: random.PRNGKey, T: int) -> tuple[jnp.ndarray, jnp.ndarray]:
+    def __call__(self, key: jax.Array, T: int) -> tuple[jnp.ndarray, jnp.ndarray]:
         """
         Generate a Brownian motion or bridge.
 
