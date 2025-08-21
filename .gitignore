@@ -1,6 +1,9 @@
 # Custom
 *.ini
 *config_paths.py
+data/datasets/*
+data/configs/*
+data/bathymetry/*
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
