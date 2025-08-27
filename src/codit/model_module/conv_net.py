@@ -28,11 +28,12 @@ def merge_state(dst: nnx.State, src: nnx.State) -> None:
 
 
 class ConvNet(nnx.Module):
-    def __init__(self, rngs: nnx.Rngs):
+    def __init__(self, in_features: int, rngs: nnx.Rngs):
         """
         Initializes the convolutional neural network layers.
 
         Args:
+            in_features (int): Number of input channels
             rngs (nnx.Rngs): Random number generators for initializing layer parameters.
 
         Attributes:
@@ -43,7 +44,7 @@ class ConvNet(nnx.Module):
             Linear2 (nnx.Linear): Output fully connected layer with 128 input features and 2 output features.
         """
         self.Conv1 = nnx.Conv(
-            in_features=8, out_features=16, kernel_size=(3, 3), strides=2, rngs=rngs
+            in_features=in_features, out_features=16, kernel_size=(3, 3), strides=2, rngs=rngs
         )
         self.Conv2 = nnx.Conv(
             in_features=16, out_features=32, kernel_size=(3, 3), strides=2, rngs=rngs
@@ -139,7 +140,7 @@ class ConvNetModel(BaseTrajectoryModel):
         super().__init__(name, params)
         self.type = "conv_net"
         self.params = params
-        self.model = ConvNet(rngs=nnx.Rngs(0))
+        self.model = ConvNet(in_features=len(self.var_idx), rngs=nnx.Rngs(0))
         self.ckpt_dir = os.path.join(config_paths.MODEL_PATH, "ckpts", self.name)
         if not os.path.exists(self.ckpt_dir):
             os.makedirs(self.ckpt_dir)
@@ -161,9 +162,11 @@ class ConvNetModel(BaseTrajectoryModel):
     ) -> "ConvNetModel":
 
         ckpt_dir = ocp.test_utils.erase_and_create_empty(self.ckpt_dir)
+        train_dataset.set_context_var_idx(self.var_idx)
         train_dataloader = data.DataLoader(
             train_dataset, batch_size=train_params.get("batch_size", 32), shuffle=True
         )
+        val_dataset.set_context_var_idx(self.var_idx)
         val_dataloader = data.DataLoader(
             val_dataset, batch_size=train_params.get("batch_size", 128), shuffle=False
         )
@@ -278,7 +281,7 @@ class ConvNetModel(BaseTrajectoryModel):
                 model, cur_coord = carry[0], carry[1]
                 context = test_dataset.get_context(
                     jnp.array([t]), cur_coord, interpolator
-                )
+                )[..., self.var_idx]
                 pred_vel = model(context) # type: ignore
                 speed, bearing = data_transform.velocity_to_distance_bearing(pred_vel[0])
                 new_coord = data_transform.inverse_haversine(
@@ -291,7 +294,7 @@ class ConvNetModel(BaseTrajectoryModel):
 
             init = (
                 model,
-                jnp.array([start_position]),
+                jnp.array([start_position], dtype=float),
             )
 
             _, pred_coords = scan_fn(init, times)

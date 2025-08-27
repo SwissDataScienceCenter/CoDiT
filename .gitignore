@@ -4,6 +4,7 @@
 data/datasets/*
 data/configs/*
 data/bathymetry/*
+wip/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

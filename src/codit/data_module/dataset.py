@@ -59,6 +59,10 @@ class OceanDataset(Dataset):
             self.trajectories = self._load_trajectories()
         except FileNotFoundError:
             self.trajectories = []
+        self.context_var_idx = jnp.arange(0, 8, dtype=int)
+        
+    def set_context_var_idx(self, var_idx: jnp.ndarray):
+        self.context_var_idx = var_idx
 
     def _load_trajectories(self) -> list:
         """Load the trajectories from the dataset.
@@ -168,6 +172,7 @@ class OceanDataset(Dataset):
         vals = jnp.nan_to_num(vals)
         bin_bathy = jnp.asarray(vals[..., -1] > 0, dtype=float)
         vals = jnp.concatenate([vals, bin_bathy[..., None]], axis=-1)
+        vals = vals[..., self.context_var_idx]
         x = jnp.asarray(utils.convert_date_to_hours(times))
         y = jnp.asarray(traj_data.latitude)
         z = jnp.asarray(traj_data.longitude)
@@ -225,6 +230,10 @@ class OceanTrainingDataset(Dataset):
             self.indices = indeces
         else:
             self.indices = jnp.arange(len(self.trajectories))
+        self.context_var_idx = jnp.arange(0, 8, dtype=int)
+        
+    def set_context_var_idx(self, var_idx: jnp.ndarray):
+        self.context_var_idx = var_idx
 
     def __len__(self) -> int:
         """Get the number of training samples.
@@ -244,7 +253,7 @@ class OceanTrainingDataset(Dataset):
             A tuple containing the trajectory and the context data.
         """
         return np.asarray(self.trajectories[self.indices[idx]]), np.asarray(
-            self.context[self.indices[idx]]
+            self.context[self.indices[idx],...,self.context_var_idx]
         )
 
     def save(self, dataset_path: str) -> None:

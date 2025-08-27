@@ -71,6 +71,22 @@ class BaseTrajectoryModel(ABC):
         self.params = params
         self.training_set = None
         self.trained_sucessfully = False
+        
+        self.vars = self.params.get('vars', None)
+        if self.vars is None:
+            self.var_idx = jnp.arange(0, 8, dtype=int)
+        else:
+            var_idx = []
+            if 'hycom_current' in self.vars:
+                var_idx += [0, 1]
+            if 'copernicus_current' in self.vars:
+                var_idx += [2, 3]
+            if 'era5_wind' in self.vars:
+                var_idx += [4, 5]
+            if 'bathymetry' in self.vars:
+                var_idx += [7, 8]
+            self.var_idx = jnp.sort(jnp.asarray(var_idx, dtype=int))
+            
 
     def set_model_name(self, name: str) -> "BaseTrajectoryModel":
         """

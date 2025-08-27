@@ -324,6 +324,7 @@ class DiffusionModel(BaseTrajectoryModel):
         traj_in_metres = vmap(transform_traj_to_metre)(train_dataset.trajectories)
         self.std = jnp.std(traj_in_metres[:, -1], axis=0)
 
+        train_dataset.set_context_var_idx(self.var_idx)
         train_dataloader = data.DataLoader(
             train_dataset,
             batch_size=train_params.get(
@@ -332,6 +333,7 @@ class DiffusionModel(BaseTrajectoryModel):
             shuffle=True,
             drop_last=True,
         )
+        val_dataset.set_context_var_idx(self.var_idx)
         val_dataloader = data.DataLoader(
             val_dataset, batch_size=128, shuffle=False, drop_last=True
         )
@@ -352,8 +354,8 @@ class DiffusionModel(BaseTrajectoryModel):
         y_hist = trajectory[:1]
         input = {
             "history_target_vals": y_hist,
-            "history_context": data_sample[1][:1],
-            "prediction_context": data_sample[1][1:],
+            "history_context": data_sample[1][:1,...,self.var_idx],
+            "prediction_context": data_sample[1][1:, self.var_idx],
         }
         params = self.model.init(
             key,
@@ -464,7 +466,7 @@ class DiffusionModel(BaseTrajectoryModel):
         prediction_length = len(times) - 1
         start_context = test_dataset.get_context(
             times[:1], start_position[None], interpolator
-        )
+        )[...,self.var_idx]
         coords_denoised = [start_position]
 
         key, subkey = random.split(key)
@@ -521,7 +523,7 @@ class DiffusionModel(BaseTrajectoryModel):
             new_coord = start_position[None] + dcoord
             new_context = test_dataset.get_context(
                 numeric_time, new_coord, interpolator
-            )
+            )[..., self.var_idx]
             return new_coord, new_context
 
         keys = random.split(key, num_samples + 1)
