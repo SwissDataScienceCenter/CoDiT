@@ -24,7 +24,10 @@ class BaseTrajectoryModel(ABC):
     Attributes:
         name (str): Name of the model.
         type (str): Type of the model (default: "base_model").
-        params (dict): Model parameters.
+        params (dict): Model parameters. 
+            All models can have the field 'vars', that is a list of strings. Possible fields are 'hycom_current', 
+            'copernicus_current', 'era5_wind', and 'bathymetry', which selects the corresponding input variables.
+            If nothing is indicated, all variables are taken.
         training_sets (list): Names of the training sets used.
         trained_sucessfully (bool): Indicates if the model has been trained successfully.
 
