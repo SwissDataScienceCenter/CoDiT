@@ -2,7 +2,7 @@ import datetime
 
 from flax import linen as nn
 from flax.core import FrozenDict
-from interpax._spline import Interpolator3D
+from interpax import Interpolator3D
 from jax import lax
 from jax import numpy as jnp
 

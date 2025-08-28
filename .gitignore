@@ -5,6 +5,8 @@ data/datasets/*
 data/configs/*
 data/bathymetry/*
 wip/
+my_scripts/*
+runai_scripts/*
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

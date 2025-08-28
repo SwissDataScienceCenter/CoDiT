@@ -5,7 +5,7 @@ from abc import ABC, abstractmethod
 
 import numpy as np
 import yaml
-from interpax._spline import Interpolator3D
+from interpax import Interpolator3D
 from jax import numpy as jnp
 
 from codit.data_module import utils
@@ -87,7 +87,7 @@ class BaseTrajectoryModel(ABC):
             if 'era5_wind' in self.vars:
                 var_idx += [4, 5]
             if 'bathymetry' in self.vars:
-                var_idx += [7, 8]
+                var_idx += [6, 7]
             self.var_idx = jnp.sort(jnp.asarray(var_idx, dtype=int))
             
 

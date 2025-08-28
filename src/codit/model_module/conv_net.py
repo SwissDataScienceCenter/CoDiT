@@ -8,7 +8,7 @@ import orbax.checkpoint as ocp
 import yaml
 from flax import nnx
 from flax.training.early_stopping import EarlyStopping
-from interpax._spline import Interpolator3D
+from interpax import Interpolator3D
 from jax import numpy as jnp
 from jax import vmap
 from torch.utils import data

@@ -17,7 +17,7 @@ import yaml
 from flax import linen as nn
 from flax.core import FrozenDict
 from flax.training import orbax_utils
-from interpax._spline import Interpolator3D
+from interpax import Interpolator3D
 from jax import jit, lax, random, vmap
 
 # only use cpu
@@ -189,7 +189,7 @@ def restore_checkpoint(ckpt_file: str) -> tuple[nn.Module, list, list, jnp.ndarr
     return params, loss_list, val_loss_list, std
 
 
-class DiffusionModel(BaseTrajectoryModel):
+class CoDiTModel(BaseTrajectoryModel):
 
     def __init__(self, name: str, params: dict) -> None:
         
@@ -287,7 +287,7 @@ class DiffusionModel(BaseTrajectoryModel):
         train_dataloader: OceanTrainingDataset,
         val_dataloader: OceanTrainingDataset,
         train_params: dict = {},
-    ) -> "DiffusionModel":
+    ) -> "CoDiTModel":
         return self._fit(train_dataloader, val_dataloader, train_params)
 
     def _fit(
@@ -295,7 +295,7 @@ class DiffusionModel(BaseTrajectoryModel):
         train_dataset: OceanTrainingDataset,
         val_dataset: OceanTrainingDataset,
         train_params: dict = {},
-    ) -> "DiffusionModel":
+    ) -> "CoDiTModel":
         # return self
         default_train_params = {
             "seed": 0,
@@ -317,13 +317,12 @@ class DiffusionModel(BaseTrajectoryModel):
             traj_in_metres = velocity_vectors * 3600
             return traj_in_metres
 
-        assert isinstance(train_dataset.trajectories, jnp.ndarray), (
-            "Trajectories should be a jnp.ndarray, "
-            "but got: {}".format(type(train_dataset.trajectories))
-        )
-        traj_in_metres = vmap(transform_traj_to_metre)(train_dataset.trajectories)
+        # assert isinstance(train_dataset.trajectories, jnp.ndarray), (
+        #     "Trajectories should be a jnp.ndarray, "
+        #     "but got: {}".format(type(train_dataset.trajectories))
+        # )
+        traj_in_metres = vmap(transform_traj_to_metre)(jnp.asarray(train_dataset.trajectories))
         self.std = jnp.std(traj_in_metres[:, -1], axis=0)
-
         train_dataset.set_context_var_idx(self.var_idx)
         train_dataloader = data.DataLoader(
             train_dataset,
@@ -345,17 +344,17 @@ class DiffusionModel(BaseTrajectoryModel):
             os.makedirs(log_path)
         writer = SummaryWriter(log_dir=log_path)
         data_sample = train_dataset[0]
-        assert isinstance(data_sample[0], jnp.ndarray), (
-            "Data sample should be a jnp.ndarray, "
-            "but got: {}".format(type(data_sample[0]))
-        )
-        trajectory = self.center_and_scale_data(data_sample[0])
+        # assert isinstance(data_sample[0], jnp.ndarray), (
+        #     "Data sample should be a jnp.ndarray, "
+        #     "but got: {}".format(type(data_sample[0]))
+        # )
+        trajectory = self.center_and_scale_data(jnp.asarray(data_sample[0]))
         y = trajectory[1:]
         y_hist = trajectory[:1]
         input = {
             "history_target_vals": y_hist,
-            "history_context": data_sample[1][:1,...,self.var_idx],
-            "prediction_context": data_sample[1][1:, self.var_idx],
+            "history_context": data_sample[1][:1],
+            "prediction_context": data_sample[1][1:],
         }
         params = self.model.init(
             key,
@@ -681,7 +680,7 @@ class DiffusionModel(BaseTrajectoryModel):
             pickle.dump({"params": self.nn_params, "std": self.std}, f)
     
     @classmethod
-    def import_trained_model(cls, model_name: str, import_path: str|None) -> "DiffusionModel":
+    def import_trained_model(cls, model_name: str, import_path: str|None = None) -> "CoDiTModel":
         """
         Imports a trained model from the specified path.
 

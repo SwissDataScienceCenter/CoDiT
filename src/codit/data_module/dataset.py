@@ -6,7 +6,7 @@ import jax
 import numpy as np
 import pandas as pd
 import xarray as xr
-from interpax._spline import Interpolator3D
+from interpax import Interpolator3D
 from jax import numpy as jnp
 from jax import vmap
 from torch.utils.data import Dataset
@@ -205,7 +205,8 @@ class OceanDataset(Dataset):
         coordinates = jnp.asarray(traj["coords"])
         start_position = coordinates[0]
         times = jnp.asarray(traj["time"])
-        return start_position, times, interpolator, coordinates
+        start_time = traj["dates"][0]
+        return start_position, start_time, times, interpolator, coordinates
 
 
 class OceanTrainingDataset(Dataset):
@@ -224,8 +225,8 @@ class OceanTrainingDataset(Dataset):
             trajectories: The trajectories of the drifters.
             context: The context data at the true positions.
         """
-        self.trajectories = trajectories
-        self.context = context
+        self.trajectories = jnp.asarray(trajectories)
+        self.context = jnp.asarray(context)
         if indeces is not None:
             self.indices = indeces
         else:
@@ -253,7 +254,7 @@ class OceanTrainingDataset(Dataset):
             A tuple containing the trajectory and the context data.
         """
         return np.asarray(self.trajectories[self.indices[idx]]), np.asarray(
-            self.context[self.indices[idx],...,self.context_var_idx]
+            self.context[self.indices[idx]][..., self.context_var_idx]
         )
 
     def save(self, dataset_path: str) -> None:
@@ -287,7 +288,6 @@ class OceanTrainingDataset(Dataset):
         # data = np.load(save_path)
         save_path = os.path.join(dataset_path, f"training_data_{length}h.h5")
         data = h5py.File(save_path, "r")
-
         return cls(data["trajectories"], data["context"])  # type: ignore
         # return cls(data['trajectories'], data['context'])
 
