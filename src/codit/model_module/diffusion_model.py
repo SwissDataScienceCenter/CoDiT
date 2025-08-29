@@ -692,7 +692,7 @@ class CoDiTModel(BaseTrajectoryModel):
             DiffusionModel: An instance of the DiffusionModel class with the loaded parameters.
         """
         if import_path is None:
-            import_path = os.path.join(config_paths.MODEL_PATH, "trained_models", model_name)
+            import_path = os.path.join(config_paths.MODEL_PATH, "trained_models")
         model_path = os.path.join(import_path, model_name)
         config_file = os.path.join(model_path, "model_config.yml")
         if not os.path.exists(config_file):
