@@ -1,7 +1,9 @@
-from jax import numpy as jnp
 import numpy as np
-from codit.data_module import data_transform
+from jax import numpy as jnp
 from jax import vmap
+
+from codit.data_module import data_transform
+
 
 def get_energy_score(true_coords: jnp.ndarray, pred_coords: jnp.ndarray) -> jnp.ndarray:
     """Calculate the energy score between true and predicted coordinates.
