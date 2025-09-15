@@ -31,12 +31,17 @@ Then make sure you set the paths as you want them in `CoDiT/src/codit/data_modul
 
 ### 3. Downloading bathymetry data
 
-The CoDiT framework makes also use of bathymetry from [GEBCO]() which is static. You can download a version [here]() and put this under
-`<DATA_PATH>/bathymetry/`, where `<DATA_PATH>` is the one you set in step 2.
+The CoDiT framework makes also use of bathymetry from [GEBCO](https://www.gebco.net/) which is static. You can download a version [here](https://polybox.ethz.ch/index.php/s/Gp6zM2JindN6nHA) and unpack the `bathymetry.zip` file this under `<DATA_PATH>/`, where `<DATA_PATH>` is the one you set in step 2.
 
 ### 4. Build the container and test
 
 Now use VSCode to build the container and try to run the notebook `CoDiT/notebooks/get_started.ipynb`. If you set up everything correctly it should run smoothly.
+
+__Note__: If you want GPU support go to the `.devcontainer/Dockerfile` and uncomment the line
+ ```
+# RUN pip install --upgrade "jax[cuda12]"
+```
+and rebuild the container.
 
 ## Cite
 
