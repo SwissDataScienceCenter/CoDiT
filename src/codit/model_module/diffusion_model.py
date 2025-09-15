@@ -459,7 +459,8 @@ class CoDiTModel(BaseTrajectoryModel):
         test_dataset: OceanDataset,
         num_samples: int = 1,
         key: jax.Array = random.PRNGKey(0),
-    ) -> jnp.ndarray:
+        return_denoising_steps: bool = False,
+    ) -> jnp.ndarray | tuple[jnp.ndarray, jnp.ndarray]:
 
         times = self._get_prediction_steps(start_time, prediction_length)
         prediction_length = len(times) - 1
@@ -499,7 +500,7 @@ class CoDiTModel(BaseTrajectoryModel):
             batch: dict,
             numeric_time: jnp.ndarray,
             i: int,
-        ) -> tuple[jnp.ndarray, jnp.ndarray]:
+        ) -> tuple[jnp.ndarray, jnp.ndarray] | tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
             denoised, denoised_steps = denoise(
                 self.nn_params,  # type: ignore
                 initial_y,
@@ -523,7 +524,10 @@ class CoDiTModel(BaseTrajectoryModel):
             new_context = test_dataset.get_context(
                 numeric_time, new_coord, interpolator
             )[..., self.var_idx]
-            return new_coord, new_context
+            if return_denoising_steps:
+                return new_coord, new_context, denoised_steps
+            else:
+                return new_coord, new_context
 
         keys = random.split(key, num_samples + 1)
         key, subkeys = keys[0], keys[1:]
@@ -538,9 +542,14 @@ class CoDiTModel(BaseTrajectoryModel):
 
         denoise_func = jit(get_denoised_trajectory)
         for i in range(1, prediction_length + 1):
-            new_coord, new_context = denoise_func(
-                subkeys, W, initial_y, batch, times[i : i + 1], i
-            )
+            if return_denoising_steps:
+                new_coord, new_context, denoise_steps_scaled = denoise_func(
+                    subkeys, W, initial_y, batch, times[i : i + 1], i
+                )
+            else:
+                new_coord, new_context = denoise_func(
+                    subkeys, W, initial_y, batch, times[i : i + 1], i
+                )
             coords_denoised.append(new_coord)
             batch["prediction_context"] = (
                 batch["prediction_context"].at[:, i : i + 1].set(new_context)
@@ -550,7 +559,17 @@ class CoDiTModel(BaseTrajectoryModel):
                 start_context[None], (num_samples, 1, 1, 1, 1)
             )
         pred_coords = jnp.concatenate(coords_denoised, axis=1)
-        return pred_coords[:, 1:]
+        if return_denoising_steps:
+            denoised_steps_scaled = denoise_steps_scaled * self.std
+            distance_in_metres = jnp.sqrt(
+                denoised_steps_scaled[..., 0] ** 2 + denoised_steps_scaled[..., 1] ** 2
+            )
+            bearing_angle = jnp.arctan2(denoised_steps_scaled[..., 1], denoised_steps_scaled[..., 0])
+            bearing_angle = jnp.degrees(bearing_angle)
+            denoised_coords = vmap(vmap(vmap(data_transform.inverse_haversine, in_axes=(None, 0, 0)), in_axes=(None, 0, 0)), in_axes=(None, 0, 0))(start_position, distance_in_metres, bearing_angle)
+            return pred_coords[:, 1:], denoised_coords
+        else:
+            return pred_coords[:, 1:]
 
     # def predict_steps(
     #     self,

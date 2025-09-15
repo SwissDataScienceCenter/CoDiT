@@ -29,7 +29,7 @@ def velocity_to_distance_bearing(
     return speed, bearing_deg
 
 
-def inverse_haversine(pos: tuple, distance: float, bearing: float) -> jax.Array:
+def inverse_haversine(pos: tuple | jax.Array, distance: float | jax.Array, bearing: float | jax.Array) -> jax.Array:
     """
     Calculate the new latitude and longitude given a starting point,
     distance (in meters), and bearing (in degrees) using JAX.

@@ -305,7 +305,8 @@ class OceanTrainingDataset(Dataset):
         context = []
 
         for sample in tqdm(iter(dataset)):
-            _, times, interpolator, coordinates = sample
+            #_, times, interpolator, coordinates = sample
+            _, _, times, interpolator, coordinates = sample
             context.append(dataset.get_context(times, coordinates, interpolator)[None])
             trajectories.append(coordinates[None])
 
