@@ -76,16 +76,18 @@ def load_trajectory_metadata(config: dict, true_start_positions: np.ndarray, len
     Recreates the same non-overlapping snippets as OceanDataset._load_trajectories, then
     matches each result trajectory's start (lat, lon) to the nearest snippet.
 
-    Returns arrays `start_month` (1–12) and `drogue_status` (1.0 = drogue, 0.0 = no drogue,
-    NaN = unknown), aligned to `true_start_positions`.
+    Returns arrays ``start_month`` (1–12), ``drogue_status`` (1.0 = drogue, 0.0 = no
+    drogue, NaN = unknown), and ``start_times`` (np.datetime64, NaT = unknown),
+    aligned to ``true_start_positions``.
     """
     n = len(true_start_positions)
     start_month = np.full(n, np.nan)
     drogue_status = np.full(n, np.nan)
+    start_times = np.full(n, np.datetime64("NaT"), dtype="datetime64[ns]")
 
     traj_file = config.get("trajectories_file", "")
     if not os.path.exists(traj_file):
-        return {"start_month": start_month, "drogue_status": drogue_status}
+        return {"start_month": start_month, "drogue_status": drogue_status, "start_times": start_times}
 
     traj_ds = xr.open_dataset(traj_file)
     traj_df = pd.DataFrame(
@@ -93,13 +95,13 @@ def load_trajectory_metadata(config: dict, true_start_positions: np.ndarray, len
         columns=["ID", "time", "latitude", "longitude", "DrogueBallast"],
         index=traj_ds["time"].values,
     )
-    
-    
+
     grouped = traj_df.groupby("ID")
     length_to_extract = length + 1
     snippet_starts = []
     snippet_months = []
     snippet_drogues = []
+    snippet_start_times = []
 
     for _, group in grouped:
         for i in range(0, len(group) - length_to_extract + 1, length_to_extract):
@@ -111,20 +113,17 @@ def load_trajectory_metadata(config: dict, true_start_positions: np.ndarray, len
                 snippet_months.append(snippet.index[0].month)
                 val = 0 if snippet["DrogueBallast"].iloc[0] == "0 kg" else 1
                 snippet_drogues.append(np.nan if pd.isna(val) else float(val > 0))
-                # if has_drogue:
-                #     val = snippet["DrogueBallast"].iloc[0]
-                #     snippet_drogues.append(np.nan if pd.isna(val) else float(val > 0))
-                # else:
-                #     snippet_drogues.append(np.nan)
+                snippet_start_times.append(np.datetime64(snippet.index[0], "ns"))
 
     traj_ds.close()
 
     if len(snippet_starts) == 0:
-        return {"start_month": start_month, "drogue_status": drogue_status}
+        return {"start_month": start_month, "drogue_status": drogue_status, "start_times": start_times}
 
-    snippet_starts = np.array(snippet_starts)  # (M, 2)
+    snippet_starts = np.array(snippet_starts)       # (M, 2)
     snippet_months = np.array(snippet_months)
     snippet_drogues = np.array(snippet_drogues)
+    snippet_start_times = np.array(snippet_start_times, dtype="datetime64[ns]")
 
     for i, pos in enumerate(true_start_positions):
         dists = np.sqrt(
@@ -134,8 +133,9 @@ def load_trajectory_metadata(config: dict, true_start_positions: np.ndarray, len
         if dists[idx] < 1e-3:
             start_month[i] = snippet_months[idx]
             drogue_status[i] = snippet_drogues[idx]
+            start_times[i] = snippet_start_times[idx]
 
-    return {"start_month": start_month, "drogue_status": drogue_status}
+    return {"start_month": start_month, "drogue_status": drogue_status, "start_times": start_times}
 
 
 # %%
@@ -157,6 +157,7 @@ metrics_dict = {m: {"mean_distance": [], "energy_score": [], "skill_score": []} 
 all_true_coords = []
 all_start_months = []
 all_drogue_status = []
+all_snippet_start_times = []
 
 for result_file_name in tqdm(result_file_names):
     # true_coords come from hycom_parcels (as in result_plots.py)
@@ -209,6 +210,7 @@ for result_file_name in tqdm(result_file_names):
     #     meta = {"start_month": np.full(N, np.nan), "drogue_status": np.full(N, np.nan)}
     all_start_months.append(meta["start_month"])
     all_drogue_status.append(meta["drogue_status"])
+    all_snippet_start_times.append(meta["start_times"])
 
 for model in all_models:
     for key in metrics_dict[model]:
@@ -217,6 +219,7 @@ for model in all_models:
 all_true_coords = np.concatenate(all_true_coords, axis=0)  # (N_total, T+1, 2)
 all_start_months = np.concatenate(all_start_months)
 all_drogue_status = np.concatenate(all_drogue_status)
+all_snippet_start_times = np.concatenate(all_snippet_start_times)
 print(f"Total trajectories: {len(all_true_coords)}")
 
 # %%
