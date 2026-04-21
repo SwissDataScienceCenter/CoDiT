@@ -3,6 +3,7 @@ import os
 import pickle
 import shutil
 import warnings
+from typing import Callable, Optional
 
 # Suppress the SerializationWarning
 from functools import partial
@@ -268,7 +269,7 @@ class CoDiTModel(BaseTrajectoryModel):
             T=prediction_length * dt,  # type: ignore
         )
         self.nn_params = None
-        self._denoise_func: object = None  # cached jit-compiled step function
+        self._denoise_func: Optional[Callable] = None  # cached jit-compiled step function
 
     def center_and_scale_data(self, trajectory: jnp.ndarray) -> jnp.ndarray:
         if len(trajectory.shape) == 2:
@@ -440,6 +441,7 @@ class CoDiTModel(BaseTrajectoryModel):
                 std=self.std,
             )
             self.nn_params = params
+            self._denoise_func = None  # invalidate cached jit (nn_params changed)
         return self
 
     def load_trained_model(self) -> None:
@@ -448,6 +450,7 @@ class CoDiTModel(BaseTrajectoryModel):
             os.path.join(self.ckpt_dir, "final", "params.npz"), allow_pickle=True
         )
         self.nn_params = trained_model["params"]
+        self._denoise_func = None  # invalidate cached jit (nn_params changed)
         self.std = trained_model["std"]
 
 
@@ -528,6 +531,9 @@ class CoDiTModel(BaseTrajectoryModel):
                 new_context = test_dataset.get_context(
                     numeric_time, new_coord, interp
                 )[..., self.var_idx]
+                # NOTE: return_denoising_steps is a Python bool resolved at trace
+                # time. This function is never cached (self._denoise_func) when
+                # return_denoising_steps=True, so the two return arities are safe.
                 if return_denoising_steps:
                     return new_coord, new_context, denoised_steps
                 else:
