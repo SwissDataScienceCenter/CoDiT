@@ -7,6 +7,7 @@ import numpy as np
 from matplotlib import pyplot as plt
 from adopt import config_paths
 from codit.data_module import config_funcs, data_transform
+from codit.data_module.dataset import OceanDataset
 from codit.eval_module import metrics
 from jax import numpy as jnp
 from jax import vmap
@@ -136,6 +137,71 @@ def load_trajectory_metadata(config: dict, true_start_positions: np.ndarray, len
             start_times[i] = snippet_start_times[idx]
 
     return {"start_month": start_month, "drogue_status": drogue_status, "start_times": start_times}
+
+
+def load_glorys_eke_from_config(
+    config: dict,
+    start_positions: np.ndarray,   # (N, 2)  lat, lon
+    start_times: np.ndarray,        # (N,)    np.datetime64[ns]
+    length: int,
+) -> np.ndarray:
+    """Lookup GLORYS EKE = 0.5*(uo²+vo²) for each trajectory using OceanDataset.
+
+    Instantiates an OceanDataset from the config to obtain the merged context
+    (``context_xarray``), which includes GLORYS ``uo``/``vo`` fields.  For every
+    trajectory the time range [start_time, start_time + length hours] is interpolated
+    at the trajectory's start lat/lon.  Mean 0.5*(uo²+vo²) over the available time
+    steps is returned as a scalar EKE per trajectory.
+
+    If a trajectory's start_time is NaT (metadata not found) or outside the dataset's
+    time range, NaN is returned for that trajectory.
+
+    Args:
+        config: Completed config dictionary (will be deep-copied internally to avoid
+            mutation by OceanDataset.__init__).
+        start_positions: Array of shape (N, 2) with (lat, lon) for each trajectory start.
+        start_times: Array of shape (N,) with np.datetime64 start timestamps.
+        length: Trajectory length in hours.
+
+    Returns:
+        eke: np.ndarray of shape (N,) with mean GLORYS EKE [m²/s²] per trajectory.
+    """
+    n = len(start_positions)
+    eke_out = np.full(n, np.nan)
+
+    valid_mask = ~np.isnat(start_times)
+    if not valid_mask.any():
+        return eke_out
+
+    dataset = OceanDataset(config, length)
+    ds = dataset.context_xarray[["uo", "vo"]]
+
+    # Ensure latitude is ascending for xarray.interp
+    if float(ds["latitude"][0]) > float(ds["latitude"][-1]):
+        ds = ds.isel(latitude=slice(None, None, -1))
+
+    ds.load()  # pull into memory once — much faster than per-trajectory round trips
+
+    for i in np.where(valid_mask)[0]:
+        t0 = pd.Timestamp(start_times[i])
+        t_end = t0 + pd.Timedelta(hours=length)
+        lat_i = float(start_positions[i, 0])
+        lon_i = float(start_positions[i, 1])
+        try:
+            ds_pt = ds.sel(time=slice(t0, t_end)).interp(
+                latitude=lat_i,
+                longitude=lon_i,
+                method="linear",
+            )
+            uo_vals = ds_pt["uo"].values
+            vo_vals = ds_pt["vo"].values
+            valid = ~np.isnan(uo_vals) & ~np.isnan(vo_vals)
+            if valid.any():
+                eke_out[i] = float(np.mean(0.5 * (uo_vals[valid] ** 2 + vo_vals[valid] ** 2)))
+        except Exception:
+            pass  # leave as NaN
+
+    return eke_out
 
 
 # %%
