@@ -268,6 +268,7 @@ class CoDiTModel(BaseTrajectoryModel):
             T=prediction_length * dt,  # type: ignore
         )
         self.nn_params = None
+        self._denoise_func: object = None  # cached jit-compiled step function
 
     def center_and_scale_data(self, trajectory: jnp.ndarray) -> jnp.ndarray:
         if len(trajectory.shape) == 2:
@@ -492,42 +493,51 @@ class CoDiTModel(BaseTrajectoryModel):
             subkeys, prediction_length
         )
 
-        @partial(vmap, in_axes=(0, 0, 0, 0, None, None))
-        def get_denoised_trajectory(
-            key: jax.Array,
-            W: jnp.ndarray,
-            initial_y: jnp.ndarray,
-            batch: dict,
-            numeric_time: jnp.ndarray,
-            i: int,
-        ) -> tuple[jnp.ndarray, jnp.ndarray] | tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
-            denoised, denoised_steps = denoise(
-                self.nn_params,  # type: ignore
-                initial_y,
-                batch,
-                self.model,
-                W,
-                self.noise_model,
-                key,
-                self.schedule_dict,
-            )
-            denoised_scaled = denoised * self.std
-            distance_in_metres = jnp.sqrt(
-                denoised_scaled[:, 0] ** 2 + denoised_scaled[:, 1] ** 2
-            )
-            bearing_angle = jnp.arctan2(denoised_scaled[:, 1], denoised_scaled[:, 0])
-            bearing_angle = jnp.degrees(bearing_angle)
-            dcoord = data_transform.inverse_haversine_grad(
-                start_position, distance_in_metres[i], bearing_angle[i]
-            )
-            new_coord = start_position[None] + dcoord
-            new_context = test_dataset.get_context(
-                numeric_time, new_coord, interpolator
-            )[..., self.var_idx]
-            if return_denoising_steps:
-                return new_coord, new_context, denoised_steps
-            else:
-                return new_coord, new_context
+        if self._denoise_func is None or return_denoising_steps:
+            @partial(vmap, in_axes=(0, 0, 0, 0, None, None, None, None))
+            def _get_denoised_trajectory(
+                key: jax.Array,
+                W: jnp.ndarray,
+                initial_y: jnp.ndarray,
+                batch: dict,
+                numeric_time: jnp.ndarray,
+                i: int,
+                start_pos: jnp.ndarray,
+                interp: Interpolator3D,
+            ) -> tuple:
+                denoised, denoised_steps = denoise(
+                    self.nn_params,  # type: ignore
+                    initial_y,
+                    batch,
+                    self.model,
+                    W,
+                    self.noise_model,
+                    key,
+                    self.schedule_dict,
+                )
+                denoised_scaled = denoised * self.std
+                distance_in_metres = jnp.sqrt(
+                    denoised_scaled[:, 0] ** 2 + denoised_scaled[:, 1] ** 2
+                )
+                bearing_angle = jnp.arctan2(denoised_scaled[:, 1], denoised_scaled[:, 0])
+                bearing_angle = jnp.degrees(bearing_angle)
+                dcoord = data_transform.inverse_haversine_grad(
+                    start_pos, distance_in_metres[i], bearing_angle[i]
+                )
+                new_coord = start_pos[None] + dcoord
+                new_context = test_dataset.get_context(
+                    numeric_time, new_coord, interp
+                )[..., self.var_idx]
+                if return_denoising_steps:
+                    return new_coord, new_context, denoised_steps
+                else:
+                    return new_coord, new_context
+
+            denoise_func = jit(_get_denoised_trajectory)
+            if not return_denoising_steps:
+                self._denoise_func = denoise_func
+        else:
+            denoise_func = self._denoise_func
 
         keys = random.split(key, num_samples + 1)
         key, subkeys = keys[0], keys[1:]
@@ -540,15 +550,16 @@ class CoDiTModel(BaseTrajectoryModel):
             ),
         }
 
-        denoise_func = jit(get_denoised_trajectory)
         for i in range(1, prediction_length + 1):
             if return_denoising_steps:
                 new_coord, new_context, denoise_steps_scaled = denoise_func(
-                    subkeys, W, initial_y, batch, times[i : i + 1], i
+                    subkeys, W, initial_y, batch, times[i : i + 1], i,
+                    start_position, interpolator,
                 )
             else:
                 new_coord, new_context = denoise_func(
-                    subkeys, W, initial_y, batch, times[i : i + 1], i
+                    subkeys, W, initial_y, batch, times[i : i + 1], i,
+                    start_position, interpolator,
                 )
             coords_denoised.append(new_coord)
             batch["prediction_context"] = (
