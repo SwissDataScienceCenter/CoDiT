@@ -224,6 +224,7 @@ all_true_coords = []
 all_start_months = []
 all_drogue_status = []
 all_snippet_start_times = []
+all_glorys_eke = []
 
 for result_file_name in tqdm(result_file_names):
     # true_coords come from hycom_parcels (as in result_plots.py)
@@ -277,6 +278,10 @@ for result_file_name in tqdm(result_file_names):
     all_start_months.append(meta["start_month"])
     all_drogue_status.append(meta["drogue_status"])
     all_snippet_start_times.append(meta["start_times"])
+    glorys_eke = load_glorys_eke_from_config(
+        config, true_coords[:, 0, :], meta["start_times"], length
+    )
+    all_glorys_eke.append(glorys_eke)
 
 for model in all_models:
     for key in metrics_dict[model]:
@@ -286,6 +291,7 @@ all_true_coords = np.concatenate(all_true_coords, axis=0)  # (N_total, T+1, 2)
 all_start_months = np.concatenate(all_start_months)
 all_drogue_status = np.concatenate(all_drogue_status)
 all_snippet_start_times = np.concatenate(all_snippet_start_times)
+all_glorys_eke = np.concatenate(all_glorys_eke)  # (N_total,)
 print(f"Total trajectories: {len(all_true_coords)}")
 
 # %%
