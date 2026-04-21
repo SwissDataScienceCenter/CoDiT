@@ -13,14 +13,14 @@ from codit.eval_module import metrics
 
 # %%
 figs_path = os.path.join(config_paths.DATA_PATH, "figs")
-dataset = "coastline"  #'coastline'#
+dataset = "open_ocean"  #'coastline'#
 split = 'test'
 if dataset == "open_ocean":
     models = ["naive",
             "hycom_parcels", 
             "glorys_parcels",
             "linear_gauss",
-            "conv_net", 
+            #"conv_net", 
             f"codit_GRU_{dataset}_conv_adam_K100_hycom_current_copernicus_current_era5_wind",
             f"codit_Transformer_{dataset}_conv_adam_K100_hycom_current_copernicus_current_era5_wind", ] 
     label_dict = {
@@ -28,7 +28,7 @@ if dataset == "open_ocean":
         "hycom_parcels": "HYCOM",
         "glorys_parcels": "GLORYS",
         "conv_net": "CNN",
-        "linear_gauss": "Linear-Gaussian",
+        "linear_gauss": "WDM",
         f"codit_GRU_{dataset}_conv_adam_K100_hycom_current_copernicus_current_era5_wind": "CoDiT (GRU)",
         f"codit_Transformer_{dataset}_conv_adam_K100_hycom_current_copernicus_current_era5_wind": "CoDiT (TF)",
     }
@@ -46,7 +46,7 @@ elif dataset == "coastline":
         "hycom_parcels": "HYCOM",
         "glorys_parcels": "GLORYS",
         "conv_net": "CNN",
-        "linear_gauss": "Linear-Gaussian",
+        "linear_gauss": "WDM",
         f"codit_GRU_{dataset}_conv_adam_K100_hycom_current_copernicus_current_era5_wind_bathymetry": "CoDiT (GRU)",
         f"codit_Transformer_{dataset}_conv_adam_K100_hycom_current_copernicus_current_era5_wind_bathymetry": "CoDiT (TF)",
     }
@@ -114,7 +114,7 @@ result_path = os.path.join(config_paths.RESULT_PATH, dataset, split)
 # )
 # )
 conv_result_file_names = os.listdir(
-    os.path.join(result_path,  f"conv_net",
+    os.path.join(result_path,  f"hycom_parcels",
 )
 )
 lingauss_result_file_names = os.listdir(
@@ -184,22 +184,13 @@ color_dict = {
     "HYCOM": "gray",
     "GLORYS": "C8",
     "CNN": "C1",
-    "Linear-Gaussian": "C2",
+    "WDM": "C2",
     "CoDiT (GRU)": "C3",
     "CoDiT (TF)": "C4",
 }
-valid_idx1 = np.asarray(
-    np.logical_not(
-        np.any(np.isnan(metrics_dict[f"conv_net"]["mean_distance"]), axis=1)
-    ) *
-    np.logical_not(
-        np.any(np.isnan(metrics_dict[f"hycom_parcels"]["mean_distance"]), axis=1)
-    ) *
-    np.logical_not(
-        np.any(np.isnan(metrics_dict[f"glorys_parcels"]["mean_distance"]), axis=1)
-    )
-    , dtype=bool
-)
+valid_idx1 = np.ones(len(metrics_dict[models[0]]["mean_distance"]), dtype=bool)
+for model in models:
+    valid_idx1 &= ~np.any(np.isnan(metrics_dict[model]["mean_distance"]), axis=1)
 valid_idx2 = np.asarray(metrics_dict['naive']['mean_distance'][:,-1] > 500)
 valid_idx = np.where(np.logical_and(
     valid_idx1,
@@ -520,8 +511,127 @@ for model in models:
     }
 
 results_df = pd.DataFrame(results_df).T
-results_df
 
+# save results_df to csv
+results_df.to_csv(os.path.join(config_paths.RESULT_PATH, f"ddpm_{dataset}_summary.csv"))
+
+
+# %%
+from scipy.stats import wilcoxon
+
+metric_keys = {
+    "mean_distance": ("Pred Error [km]", 1e-3),
+    "energy_score":  ("Energy Score [km]", 1e-3),
+    "skill_score":   ("Skill Score", 1.0),
+}
+
+codit_models = [m for m in models if "codit" in m]
+
+wilcoxon_tables = {}
+for metric_key, (metric_label, scale) in metric_keys.items():
+    pval_matrix = pd.DataFrame(index=[label_dict[m] for m in models],
+                               columns=[label_dict[m] for m in models],
+                               dtype=float)
+    for m1 in models:
+        for m2 in models:
+            l1, l2 = label_dict[m1], label_dict[m2]
+            if m1 == m2:
+                pval_matrix.loc[l1, l2] = np.nan
+            else:
+                a = metrics_dict[m1][metric_key][valid_idx, -1] * scale
+                b = metrics_dict[m2][metric_key][valid_idx, -1] * scale
+                mask = ~(np.isnan(a) | np.isnan(b))
+                # One-sided test: "is CoDiT better?"
+                # For dist/energy: lower is better; for skill: higher is better
+                #if m1 in codit_models and m2 not in codit_models:
+                alt = "greater" if metric_key != "skill_score" else "less"
+                # elif m2 in codit_models and m1 not in codit_models:
+                #     alt = "greater" if metric_key != "skill_score" else "less"
+                # else:
+                #     alt = "two-sided"
+                _, p = wilcoxon(a[mask], b[mask], alternative=alt)
+                pval_matrix.loc[l1, l2] = p
+    wilcoxon_tables[metric_label] = pval_matrix
+    print(f"\n=== Wilcoxon p-values: {metric_label} (final time step) ===")
+    print(pval_matrix.to_string(float_format=lambda x: f"{x:.3e}"))
+
+# Save the p-value tables to CSV files
+for metric_label, pval_matrix in wilcoxon_tables.items():
+    pval_matrix.to_csv(os.path.join(config_paths.RESULT_PATH, f"ddpm_{dataset}_{metric_label}_wilcoxon_pvalues.csv"))
+
+# %%
+def add_significance_brackets(ax, positions, labels, pval_matrix, alpha=0.05,
+                               y_base=None, dy=None):
+    """Draw brackets with * / ** / *** above Bonferroni-significant pairs involving CoDiT models."""
+    n = len(positions)
+    n_pairs = n * (n - 1) / 2
+    threshold = alpha / n_pairs  # Bonferroni correction
+    if y_base is None:
+        y_base = ax.get_ylim()[1] * 1.05
+    if dy is None:
+        dy = (ax.get_ylim()[1] - ax.get_ylim()[0]) * 0.05
+    level = 0
+    for i in range(n):
+        for j in range(i + 1, n):
+            if not ("CoDiT" in labels[i] or "CoDiT" in labels[j]):
+                continue
+            p = pval_matrix.iloc[i, j]
+            if np.isnan(p) or p >= threshold:
+                continue
+            if p < 0.001:
+                stars = "***"
+            elif p < 0.01:
+                stars = "**"
+            else:
+                stars = "*"
+            y = y_base + level * dy
+            x1, x2 = positions[i], positions[j]
+            ax.plot([x1, x1, x2, x2], [y, y + dy * 0.3, y + dy * 0.3, y],
+                    lw=1, color="k")
+            ax.text((x1 + x2) / 2, y + dy * 0.35, stars,
+                    ha="center", va="bottom", fontsize=7)
+            level += 1
+
+model_positions = np.arange(len(models))
+fig, axes = plt.subplots(1, 3, figsize=(12, 5))
+metric_plot_cfg = [
+    ("mean_distance", "Pred Error [km]", 1e-3),
+    ("energy_score",  "Energy Score [km]", 1e-3),
+    ("skill_score",   "Skill Score", 1.0),
+]
+for ax, (metric_key, metric_label, scale) in zip(axes, metric_plot_cfg):
+    data = [metrics_dict[m][metric_key][valid_idx, -1] * scale for m in models]
+    bp = ax.boxplot(
+        data,
+        positions=model_positions,
+        widths=0.5,
+        patch_artist=True,
+        showfliers=False,
+        medianprops=dict(color="w", linewidth=2),
+    )
+    for patch, model in zip(bp["boxes"], models):
+        label = label_dict[model]
+        patch.set_facecolor(color_dict.get(label, "C0"))
+        patch.set_edgecolor(color_dict.get(label, "C0"))
+    ax.set_xticks(model_positions)
+    ax.set_xticklabels([label_dict[m] for m in models], rotation=45, ha="right")
+    ax.set_ylabel(metric_label)
+    ax.set_title("Open ocean" if dataset == "open_ocean" else "Coastal")
+    ax.grid(axis="y", alpha=0.4)
+    pval_df = wilcoxon_tables[metric_label]
+    add_significance_brackets(ax, model_positions,
+                               [label_dict[m] for m in models], pval_df)
+
+plt.tight_layout()
+plt.savefig(
+    os.path.join(config_paths.FIG_PATH, f"ddpm_{dataset}_wilcoxon.pdf"),
+    bbox_inches="tight",
+)
+plt.savefig(
+    os.path.join(config_paths.FIG_PATH, f"ddpm_{dataset}_wilcoxon.png"),
+    bbox_inches="tight", dpi=300,
+)
+plt.show()
 
 
 # %%

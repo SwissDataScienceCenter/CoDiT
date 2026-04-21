@@ -26,7 +26,6 @@ def merge_state(dst: nnx.State, src: nnx.State) -> None:
         else:
             dst[k] = v
 
-
 class ConvNet(nnx.Module):
     def __init__(self, in_features: int, rngs: nnx.Rngs):
         """
@@ -119,7 +118,7 @@ def load_checkpoint(model: nnx.Module, ckpt_dir: str) -> nnx.Module:
 
 class ConvNetModel(BaseTrajectoryModel):
 
-    def __init__(self, name: str, params: dict, load_ckpt: bool = True):
+    def __init__(self, name: str, params: dict, load_ckpt: bool = False):
         """
         Initializes the ConvNet model module.
 
@@ -168,10 +167,22 @@ class ConvNetModel(BaseTrajectoryModel):
         )
         val_dataset.set_context_var_idx(self.var_idx)
         val_dataloader = data.DataLoader(
-            val_dataset, batch_size=train_params.get("batch_size", 128), shuffle=False
+            val_dataset, batch_size=train_params.get("batch_size", 32), shuffle=False
         )
         optimizer = nnx.Optimizer(self.model, optax.adam(train_params.get("lr", 1e-3)))
 
+        state_axes = nnx.StateAxes({'Dropout': 0, ...: None})
+
+        @nnx.split_rngs(splits=train_params.get("batch_size", 32), only='dropout')
+        @nnx.vmap(
+            in_axes=(state_axes, 0), # model is not vmapped, x is vmapped, train is not vmapped
+            out_axes=0 # Output is vmapped
+        )
+        def batched_apply(model, x: jnp.ndarray):
+            """Applies the model to a batch of inputs."""
+            # NNX will handle the state and RNGs of the model instance passed to this function.
+            return model(x)
+        
         @nnx.jit
         def train_step(
             model: nnx.Module,
@@ -186,7 +197,7 @@ class ConvNetModel(BaseTrajectoryModel):
                     vmap(data_transform.velocity_vector_from_pos_time, in_axes=(0, 0, None)),
                     in_axes=(0, 0, None),
                 )(trajectory[:, :-1], trajectory[:, 1:], 3600)
-                increment_prediction = vmap(model)(context[:, :-1]) # type: ignore
+                increment_prediction = batched_apply(model, context[:, :-1]) # type: ignore
                 return jnp.mean(jnp.pow(increment_prediction - true_increments, 2))
 
             loss, grad = nnx.value_and_grad(loss_fn)(model, trajectory, context)
@@ -202,7 +213,7 @@ class ConvNetModel(BaseTrajectoryModel):
                     vmap(data_transform.velocity_vector_from_pos_time, in_axes=(0, 0, None)),
                     in_axes=(0, 0, None),
                 )(trajectory[:, :-1], trajectory[:, 1:], 3600)
-                increment_prediction = vmap(model)(context[:, :-1]) # type: ignore
+                increment_prediction = batched_apply(model, context[:, :-1]) # type: ignore
                 return jnp.mean(jnp.pow(increment_prediction - true_increments, 2))
 
             loss = loss_fn(model)
@@ -214,6 +225,7 @@ class ConvNetModel(BaseTrajectoryModel):
             min_delta=train_params.get("min_delta", 0.001),
             patience=train_params.get("patience", 5),
         )
+        self.model.train()
         for epoch in range(num_epochs):
             for i, batch in tqdm(enumerate(train_dataloader)):
                 trajectory, context = jnp.asarray(batch[0]), jnp.asarray(batch[1])

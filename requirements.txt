@@ -23,3 +23,5 @@ pre-commit
 types-PyYAML
 streamlit==1.25.0
 tensorboard
+parcels
+trajan

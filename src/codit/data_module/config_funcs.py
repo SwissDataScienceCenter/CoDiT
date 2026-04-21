@@ -94,6 +94,8 @@ def save_config(configs: dict, config_path: str, data_path: str) -> None:
     dataset_path = os.path.join(data_path, "datasets", data_name)
     configs["dataset_path"] = dataset_path
     configs["type"] = "region_based"
+    if not os.path.exists(config_path):
+        os.makedirs(config_path)
     config_file = os.path.join(config_path, data_name + ".yml")
     with open(config_file, "w") as f:
         yaml.dump(configs, f, default_flow_style=False)
