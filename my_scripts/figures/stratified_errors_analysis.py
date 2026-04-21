@@ -295,17 +295,20 @@ all_glorys_eke = np.concatenate(all_glorys_eke)  # (N_total,)
 print(f"Total trajectories: {len(all_true_coords)}")
 
 # %%
-# ─── Compute EKE = 0.5*(U²+V²) from first displacement in true_coords ────────
-# velocity_vector_from_pos_time returns (vx, vy) [m/s] via haversine distance + bearing
+# ─── EKE from GLORYS ocean current field (uo, vo) with displacement fallback ─
+# Displacement-based fallback for trajectories missing GLORYS coverage
 vel = np.asarray(
     vmap(vmap(data_transform.velocity_vector_from_pos_time, in_axes=(0, 0, None)), in_axes=(0, 0, None))(
         jnp.asarray(all_true_coords[:, :-1, :]),  # pos_start  (lat, lon)
         jnp.asarray(all_true_coords[:, 1:, :]),  # pos_end
         3600.0,                                  # Δt = 1 hour in seconds
     )
-)  # (N, 2)
-all_eke = 0.5 * (vel[:, :, 0] ** 2 + vel[:, :, 1] ** 2)  # [m²/s²]
-all_eke = np.mean(all_eke, axis=1)  # average EKE over trajectory duration → (N,)
+)  # (N, T, 2)
+all_eke_displacement = 0.5 * (vel[:, :, 0] ** 2 + vel[:, :, 1] ** 2)  # [m²/s²]
+all_eke_displacement = np.mean(all_eke_displacement, axis=1)  # (N,)
+
+# Use GLORYS where available, displacement-based otherwise
+all_eke = np.where(np.isnan(all_glorys_eke), all_eke_displacement, all_glorys_eke)
 # %%
 # ─── Validity filter (identical to result_plots.py) ──────────────────────────
 for metric in ["mean_distance", "energy_score", "skill_score"]:
@@ -439,7 +442,7 @@ for metric in ["mean_distance", "energy_score", "skill_score"]:
     ax_eke.set_xticklabels(eke_bin_labels)
     ax_eke.set_xlabel("EKE quantile bin  (Q1 = low, Q5 = high)")
     ax_eke.set_ylabel("Final " + metric_labels.get(metric, metric))
-    ax_eke.set_title(r"Eddy kinetic energy  $\frac{1}{2}(U^2+V^2)$")
+    ax_eke.set_title(r"Eddy kinetic energy (GLORYS $u_o$/$v_o$)  $\frac{1}{2}(u_o^2+v_o^2)$")
     ax_eke.set_ylim(bottom=0)
     ax_eke.grid(True, axis="y", alpha=0.3)
 
