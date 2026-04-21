@@ -504,7 +504,7 @@ class CoDiTModel(BaseTrajectoryModel):
                 initial_y: jnp.ndarray,
                 batch: dict,
                 numeric_time: jnp.ndarray,
-                i: int,
+                i: jax.Array,
                 start_pos: jnp.ndarray,
                 interp: Interpolator3D,
             ) -> tuple:
@@ -525,7 +525,9 @@ class CoDiTModel(BaseTrajectoryModel):
                 bearing_angle = jnp.arctan2(denoised_scaled[:, 1], denoised_scaled[:, 0])
                 bearing_angle = jnp.degrees(bearing_angle)
                 dcoord = data_transform.inverse_haversine_grad(
-                    start_pos, distance_in_metres[i], bearing_angle[i]
+                    start_pos,
+                    jax.lax.dynamic_index_in_dim(distance_in_metres, i, axis=0, keepdims=False),
+                    jax.lax.dynamic_index_in_dim(bearing_angle, i, axis=0, keepdims=False),
                 )
                 new_coord = start_pos[None] + dcoord
                 new_context = test_dataset.get_context(
@@ -559,12 +561,12 @@ class CoDiTModel(BaseTrajectoryModel):
         for i in range(1, prediction_length + 1):
             if return_denoising_steps:
                 new_coord, new_context, denoise_steps_scaled = denoise_func(
-                    subkeys, W, initial_y, batch, times[i : i + 1], i,
+                    subkeys, W, initial_y, batch, times[i : i + 1], jnp.int32(i),
                     start_position, interpolator,
                 )
             else:
                 new_coord, new_context = denoise_func(
-                    subkeys, W, initial_y, batch, times[i : i + 1], i,
+                    subkeys, W, initial_y, batch, times[i : i + 1], jnp.int32(i),
                     start_position, interpolator,
                 )
             coords_denoised.append(new_coord)
