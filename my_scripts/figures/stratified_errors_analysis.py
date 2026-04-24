@@ -37,7 +37,7 @@ elif dataset == "coastline":
 
 # Add extra models here to overlay them in the stratified plots.
 # Example: extra_models = [f"codit_Transformer_{dataset}_conv_adam_K100_..."]
-extra_models = ["glorys_parcels"]
+extra_models = ["glorys_parcels", 'linear_gauss']  # ["codit_Transformer_open_ocean_conv_adam_K100_hycom_current_copernicus_current_era5_wind"]
 models_to_plot = [primary_model] + extra_models
 
 label_dict = {
@@ -208,16 +208,17 @@ def load_glorys_eke_from_config(
 # ─── Load result files: errors + metadata ────────────────────────────────────
 np.random.seed(0)
 
-conv_result_file_names = os.listdir(os.path.join(result_path, "conv_net"))
+#conv_result_file_names = os.listdir(os.path.join(result_path, "conv_net"))
 lingauss_result_file_names = os.listdir(os.path.join(result_path, "linear_gauss"))
 result_file_names = sorted(
-    set(conv_result_file_names).intersection(set(lingauss_result_file_names))
+    #set(conv_result_file_names).intersection(set(lingauss_result_file_names))
+    lingauss_result_file_names
 )
 print(f"Result files: {len(result_file_names)}")
 
 # Models needed for the validity filter (same logic as result_plots.py)
-filter_models = ["conv_net", "hycom_parcels", "glorys_parcels"]
-all_models = models_to_plot + filter_models + ["naive"]
+filter_models = []
+all_models = models_to_plot + filter_models + ["naive"]  # ensure "naive" is included for validity filtering
 metrics_dict = {m: {"mean_distance": [], "energy_score": [], "skill_score": []} for m in all_models}
 
 all_true_coords = []
@@ -293,6 +294,22 @@ all_drogue_status = np.concatenate(all_drogue_status)
 all_snippet_start_times = np.concatenate(all_snippet_start_times)
 all_glorys_eke = np.concatenate(all_glorys_eke)  # (N_total,)
 print(f"Total trajectories: {len(all_true_coords)}")
+# save all this metadata for potential reuse without re-running the config loading and GLORYS interpolation:
+metadata_out_file = os.path.join(config_paths.RESULT_PATH, f"stratified_errors_metadata_{dataset}_{split}.npz")
+np.savez_compressed(
+    metadata_out_file,
+    true_coords=all_true_coords,
+    start_months=all_start_months,
+    drogue_status=all_drogue_status,
+    snippet_start_times=all_snippet_start_times,
+    glorys_eke=all_glorys_eke,
+)
+print(f"Saved metadata to {metadata_out_file}")
+
+# save also the metrics_dict for reuse without re-running the metric calculations:
+metrics_out_file = os.path.join(config_paths.RESULT_PATH, f"stratified_errors_metrics_{dataset}_{split}.npz")
+np.savez_compressed(metrics_out_file, **{f"{model}_{metric}": metrics_dict[model][metric] for model in all_models for metric in metrics_dict[model]})
+print(f"Saved metrics to {metrics_out_file}")
 
 # %%
 # ─── EKE from GLORYS ocean current field (uo, vo) with displacement fallback ─
@@ -308,27 +325,28 @@ all_eke_displacement = 0.5 * (vel[:, :, 0] ** 2 + vel[:, :, 1] ** 2)  # [m²/s²
 all_eke_displacement = np.mean(all_eke_displacement, axis=1)  # (N,)
 
 # Use GLORYS where available, displacement-based otherwise
-all_eke = np.where(np.isnan(all_glorys_eke), all_eke_displacement, all_glorys_eke)
+all_eke = all_glorys_eke.copy()
+#all_eke = np.where(np.isnan(all_glorys_eke), all_eke_displacement, all_glorys_eke)
 # %%
 # ─── Validity filter (identical to result_plots.py) ──────────────────────────
 for metric in ["mean_distance", "energy_score", "skill_score"]:
     print(metrics_dict["glorys_parcels"][metric].shape)
+    valid_mask = ~np.isnan(metrics_dict["glorys_parcels"][metric][:, -1])
+    for model in models_to_plot:
+        valid_mask &= ~np.isnan(metrics_dict[model][metric][:, -1])
     valid_mask = (
-        ~np.any(np.isnan(metrics_dict["conv_net"][metric]), axis=1)
-        & ~np.any(np.isnan(metrics_dict["hycom_parcels"][metric]), axis=1)
-        & ~np.any(np.isnan(metrics_dict["glorys_parcels"][metric]), axis=1)
-        & (metrics_dict["naive"]["mean_distance"][:, -1] > 500)
+        valid_mask
+         & (metrics_dict["naive"]["mean_distance"][:, -1] > 500)
     )
     valid_idx = np.where(valid_mask)[0]
     print(f"Valid trajectories: {len(valid_idx)}")
 
-    # %%
     # ─── Stratification setup ─────────────────────────────────────────────────────
     MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
                 "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-    LAT_BINS = [-60, -30, 0, 15, 30, 60]
+    LAT_BINS = [-60, -30, -15, 15, 30, 60]
     LAT_LABELS = [f"{a}° to {b}°" for a, b in zip(LAT_BINS[:-1], LAT_BINS[1:])]
-    N_EKE_BINS = 3
+    N_EKE_BINS = 5
 
     # Metadata for valid trajectories only
     lat_valid = all_true_coords[valid_idx, 0, 0]
@@ -345,117 +363,123 @@ for metric in ["mean_distance", "energy_score", "skill_score"]:
 
     lat_masks = bin_masks(lat_valid, LAT_BINS)
     eke_masks = bin_masks(eke_valid, eke_edges)
-    eke_bin_labels = [
-        f"Q{i+1}\n{eke_edges[i]:.2f}–{eke_edges[i+1]:.2f}" if i < N_EKE_BINS - 1
-        else f"Q{i+1}\n>{eke_edges[i]:.2f}"
-        for i in range(N_EKE_BINS)
+    eke_bin_labels = []
+    for i in range(N_EKE_BINS):
+        if i == 0:
+            eke_label = f"Q{i}\n<{eke_edges[i+1] * 1e4:.1f}"
+        elif i < N_EKE_BINS - 1:    
+            eke_label = f"Q{i+1}\n{eke_edges[i] * 1e4:.1f}–{eke_edges[i+1] * 1e4:.1f}"
+        else:
+            eke_label = f"Q{i+1}\n>{eke_edges[i] * 1e4:.1f}"
+        eke_bin_labels.append(eke_label)
+
+
+# %%
+# ─── Stratified box plots (2 × 2) ────────────────────────────────────────────
+metric = "skill_score"  # choose which metric to plot
+fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+title_suffix = "open ocean" if dataset == "open_ocean" else "coastal"
+fig.suptitle(f"CoDiT prediction error stratification — {title_suffix} dataset", fontsize=13)
+
+n_models = len(models_to_plot)
+box_width = 0.6 / max(n_models, 1)
+scale = 1.0 if metric == "skill_score" else 1e-3  # scale distances to km for plotting
+
+bp_style = dict(patch_artist=True, manage_ticks=False, showfliers=False)
+
+for imodel, model in enumerate(models_to_plot):
+    label = label_dict.get(model, model)
+    color = color_dict.get(label, "C0")
+    err = metrics_dict[model][metric][valid_idx, -1] * scale
+    offset = (imodel - (n_models - 1) / 2) * box_width
+
+    def safe_bins(masks, data):
+        return [data[m] if m.any() else np.array([np.nan]) for m in masks]
+
+    bp_kwargs = dict(
+        boxprops=dict(color=color, facecolor=color),
+        medianprops=dict(color="w", linewidth=2),
+        whiskerprops=dict(color=color),
+        capprops=dict(color=color),
+        **bp_style,
+    )
+
+    # ── Latitude ──────────────────────────────────────────────────────────────
+    ax = axes[0, 0]
+    pos = np.arange(len(LAT_LABELS)) + offset
+    bp = ax.boxplot(safe_bins(lat_masks, err), positions=pos, widths=box_width, **bp_kwargs)
+    bp["boxes"][0].set_label(label)
+
+    # ── Month ──────────────────────────────────────────────────────────────────
+    ax = axes[0, 1]
+    pos = np.arange(12) + offset
+    month_data = [err[month_valid == m + 1] for m in range(12)]
+    month_data = [d if len(d) > 0 else np.array([np.nan]) for d in month_data]
+    bp = ax.boxplot(month_data, positions=pos, widths=box_width, **bp_kwargs)
+    bp["boxes"][0].set_label(label)
+
+    # ── Drogue ─────────────────────────────────────────────────────────────────
+    ax = axes[1, 0]
+    drogue_data = [
+        err[drogue_valid == 1.0] if (drogue_valid == 1.0).any() else np.array([np.nan]),
+        err[drogue_valid == 0.0] if (drogue_valid == 0.0).any() else np.array([np.nan]),
     ]
+    pos = np.array([0, 1]) + offset
+    bp = ax.boxplot(drogue_data, positions=pos, widths=box_width, **bp_kwargs)
+    bp["boxes"][0].set_label(label)
 
-    # %%
-    # ─── Stratified box plots (2 × 2) ────────────────────────────────────────────
-    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
-    title_suffix = "open ocean" if dataset == "open_ocean" else "coastal"
-    fig.suptitle(f"CoDiT prediction error stratification — {title_suffix} dataset", fontsize=13)
+    # ── EKE ────────────────────────────────────────────────────────────────────
+    ax = axes[1, 1]
+    pos = np.arange(N_EKE_BINS) + offset
+    bp = ax.boxplot(safe_bins(eke_masks, err), positions=pos, widths=box_width, **bp_kwargs)
+    bp["boxes"][0].set_label(label)
 
-    n_models = len(models_to_plot)
-    box_width = 0.6 / max(n_models, 1)
-    scale = 1.0 if metric == "skill_score" else 1e-3  # scale distances to km for plotting
+# ── Axis formatting ────────────────────────────────────────────────────────────
+ax_lat, ax_month = axes[0, 0], axes[0, 1]
+ax_drogue, ax_eke = axes[1, 0], axes[1, 1]
 
-    bp_style = dict(patch_artist=True, manage_ticks=False, showfliers=False)
+ax_lat.set_xticks(range(len(LAT_LABELS)))
+ax_lat.set_xticklabels(LAT_LABELS, rotation=45, ha="right")
+ax_lat.set_xlabel("Latitude")
+ax_lat.set_ylabel("Final " + metric_labels.get(metric, metric))
+ax_lat.set_title("Latitude")
+ax_lat.set_ylim(bottom=0)
+ax_lat.grid(True, axis="y", alpha=0.3)
 
-    for imodel, model in enumerate(models_to_plot):
-        label = label_dict.get(model, model)
-        color = color_dict.get(label, "C0")
-        err = metrics_dict[model][metric][valid_idx, -1] * scale
-        offset = (imodel - (n_models - 1) / 2) * box_width
+ax_month.set_xticks(range(12))
+ax_month.set_xticklabels(MONTH_NAMES, rotation=45, ha="right")
+ax_month.set_xlabel("Month")
+ax_month.set_ylabel("Final " + metric_labels.get(metric, metric))
+ax_month.set_title("Month")
+ax_month.set_ylim(bottom=0)
+ax_month.grid(True, axis="y", alpha=0.3)
 
-        def safe_bins(masks, data):
-            return [data[m] if m.any() else np.array([np.nan]) for m in masks]
+ax_drogue.set_xticks([0, 1])
+ax_drogue.set_xticklabels(["Drogue", "No drogue"])
+ax_drogue.set_xlabel("Drogue status")
+ax_drogue.set_ylabel("Final " + metric_labels.get(metric, metric))
+ax_drogue.set_title("Drogue vs no drogue")
+ax_drogue.set_ylim(bottom=0)
+ax_drogue.grid(True, axis="y", alpha=0.3)
 
-        bp_kwargs = dict(
-            boxprops=dict(color=color, facecolor=color),
-            medianprops=dict(color="w", linewidth=2),
-            whiskerprops=dict(color=color),
-            capprops=dict(color=color),
-            **bp_style,
-        )
+ax_eke.set_xticks(range(N_EKE_BINS))
+ax_eke.set_xticklabels(eke_bin_labels)
+ax_eke.set_xlabel("EKE quantile bin [cm²/s²]")
+ax_eke.set_ylabel("Final " + metric_labels.get(metric, metric))
+ax_eke.set_title(r"Eddy kinetic energy (GLORYS $u_o$/$v_o$)  $\frac{1}{2}(u_o^2+v_o^2)$")
+ax_eke.set_ylim(bottom=0)
+ax_eke.grid(True, axis="y", alpha=0.3)
 
-        # ── Latitude ──────────────────────────────────────────────────────────────
-        ax = axes[0, 0]
-        pos = np.arange(len(LAT_LABELS)) + offset
-        bp = ax.boxplot(safe_bins(lat_masks, err), positions=pos, widths=box_width, **bp_kwargs)
-        bp["boxes"][0].set_label(label)
+if n_models > 1:
+    for ax in axes.flat:
+        ax.legend(fontsize=8)
 
-        # ── Month ──────────────────────────────────────────────────────────────────
-        ax = axes[0, 1]
-        pos = np.arange(12) + offset
-        month_data = [err[month_valid == m + 1] for m in range(12)]
-        month_data = [d if len(d) > 0 else np.array([np.nan]) for d in month_data]
-        bp = ax.boxplot(month_data, positions=pos, widths=box_width, **bp_kwargs)
-        bp["boxes"][0].set_label(label)
+plt.tight_layout()
 
-        # ── Drogue ─────────────────────────────────────────────────────────────────
-        ax = axes[1, 0]
-        drogue_data = [
-            err[drogue_valid == 1.0] if (drogue_valid == 1.0).any() else np.array([np.nan]),
-            err[drogue_valid == 0.0] if (drogue_valid == 0.0).any() else np.array([np.nan]),
-        ]
-        pos = np.array([0, 1]) + offset
-        bp = ax.boxplot(drogue_data, positions=pos, widths=box_width, **bp_kwargs)
-        bp["boxes"][0].set_label(label)
-
-        # ── EKE ────────────────────────────────────────────────────────────────────
-        ax = axes[1, 1]
-        pos = np.arange(N_EKE_BINS) + offset
-        bp = ax.boxplot(safe_bins(eke_masks, err), positions=pos, widths=box_width, **bp_kwargs)
-        bp["boxes"][0].set_label(label)
-
-    # ── Axis formatting ────────────────────────────────────────────────────────────
-    ax_lat, ax_month = axes[0, 0], axes[0, 1]
-    ax_drogue, ax_eke = axes[1, 0], axes[1, 1]
-
-    ax_lat.set_xticks(range(len(LAT_LABELS)))
-    ax_lat.set_xticklabels(LAT_LABELS, rotation=45, ha="right")
-    ax_lat.set_xlabel("Latitude (bin centre)")
-    ax_lat.set_ylabel("Final " + metric_labels.get(metric, metric))
-    ax_lat.set_title("Latitude")
-    ax_lat.set_ylim(bottom=0)
-    ax_lat.grid(True, axis="y", alpha=0.3)
-
-    ax_month.set_xticks(range(12))
-    ax_month.set_xticklabels(MONTH_NAMES, rotation=45, ha="right")
-    ax_month.set_xlabel("Month")
-    ax_month.set_ylabel("Final " + metric_labels.get(metric, metric))
-    ax_month.set_title("Month")
-    ax_month.set_ylim(bottom=0)
-    ax_month.grid(True, axis="y", alpha=0.3)
-
-    ax_drogue.set_xticks([0, 1])
-    ax_drogue.set_xticklabels(["Drogue", "No drogue"])
-    ax_drogue.set_xlabel("Drogue status")
-    ax_drogue.set_ylabel("Final " + metric_labels.get(metric, metric))
-    ax_drogue.set_title("Drogue vs no drogue")
-    ax_drogue.set_ylim(bottom=0)
-    ax_drogue.grid(True, axis="y", alpha=0.3)
-
-    ax_eke.set_xticks(range(N_EKE_BINS))
-    ax_eke.set_xticklabels(eke_bin_labels)
-    ax_eke.set_xlabel("EKE quantile bin  (Q1 = low, Q5 = high)")
-    ax_eke.set_ylabel("Final " + metric_labels.get(metric, metric))
-    ax_eke.set_title(r"Eddy kinetic energy (GLORYS $u_o$/$v_o$)  $\frac{1}{2}(u_o^2+v_o^2)$")
-    ax_eke.set_ylim(bottom=0)
-    ax_eke.grid(True, axis="y", alpha=0.3)
-
-    if n_models > 1:
-        for ax in axes.flat:
-            ax.legend(fontsize=8)
-
-    plt.tight_layout()
-
-    out_base = os.path.join(config_paths.FIG_PATH, f"stratified_errors_{dataset}_{metric}")
-    fig.savefig(out_base + ".png", dpi=300, bbox_inches="tight")
-    fig.savefig(out_base + ".pdf", bbox_inches="tight")
-    print(f"Saved to {out_base}.png / .pdf")
-    plt.show()
+out_base = os.path.join(config_paths.FIG_PATH, f"stratified_errors_{dataset}_{metric}")
+fig.savefig(out_base + ".png", dpi=300, bbox_inches="tight")
+fig.savefig(out_base + ".pdf", bbox_inches="tight")
+print(f"Saved to {out_base}.png / .pdf")
+plt.show()
 
 # %%
