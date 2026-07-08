@@ -23,12 +23,15 @@ if __name__ == "__main__":
     parser.add_argument(
         "--context_encoder_type", type=str, default="conv"
     )  # conv, mlp, gap
+    parser.add_argument("--early_stopping_patience", type=int, default=10)
+    parser.add_argument("--early_stopping_min_delta", type=float, default=1e-4)
     parser.add_argument("--optimizer", type=str, default="adam")  # adam, adamw, sgd
     parser.add_argument("--scheduler", type=str, default="constant")  # constant, cosine
     parser.add_argument("--K", type=int, default=100)  # number of diffusion steps
     parser.add_argument("--input_vars", nargs='+', type=str, 
                         default=["hycom_current", "copernicus_current", "era5_wind", "bathymetry"], 
                         help="Input variables for the model")
+    parser.add_argument("--run_name", type=str, default="", help="Optional run name for logging and saving results")
     args = parser.parse_args()
 
     print("Loading dataset")
@@ -57,6 +60,8 @@ if __name__ == "__main__":
     input_vars = args.input_vars
     input_var_str = "_".join(input_vars)
     model_name = f"codit_{args.model_type}_{args.dataset}_{args.context_encoder_type}_{args.optimizer}_K{args.K}_{input_var_str}"
+    if args.run_name:
+        model_name += f"_{args.run_name}"
     print(f"Model name: {model_name}")
     model = CoDiTModel(
         name=model_name,
@@ -94,6 +99,8 @@ if __name__ == "__main__":
                 "learning_rate": args.learning_rate,
                 "optimizer": args.optimizer,
                 "scheduler": scheduler,
+                "early_stopping_patience": args.early_stopping_patience,
+                "early_stopping_min_delta": args.early_stopping_min_delta,
             },
         )
         model.export_trained_model(model.name)

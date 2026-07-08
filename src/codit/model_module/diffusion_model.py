@@ -307,6 +307,8 @@ class CoDiTModel(BaseTrajectoryModel):
             "learning_rate": 1e-4,
             "optimizer": "adam",
             "scheduler": None,
+            "early_stopping_patience": 10,
+            "early_stopping_min_delta": 1e-4,
         }
 
         # todo: This is not very nice, should happen in the dataset or more downstream
@@ -420,6 +422,8 @@ class CoDiTModel(BaseTrajectoryModel):
                 val_loss_list=val_loss_list,
                 writer=writer,
                 std=self.std,
+                early_stopping_patience=train_params.get("early_stopping_patience", 10),
+                early_stopping_min_delta=train_params.get("early_stopping_min_delta", 1e-4),
             )
             writer.close()
             print("storing", self.ckpt_dir)

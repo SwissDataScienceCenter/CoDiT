@@ -43,6 +43,22 @@ __Note__: If you want GPU support go to the `.devcontainer/Dockerfile` and uncom
 ```
 and rebuild the container.
 
+## Direct Coordinate Model
+
+Train the non-diffusion autoregressive model with:
+
+```bash
+micromamba run -n codit python my_scripts/model_fitting/direct_train.py --dataset open_ocean --model_type GRU
+```
+
+Evaluate it with:
+
+```bash
+micromamba run -n codit python my_scripts/model_fitting/direct_eval.py --dataset open_ocean --evaluate_subset
+```
+
+The direct model reuses the CoDiT context encoder and autoregressive decoder, but predicts normalized coordinates directly with an MSE loss instead of denoising a sampled diffusion trajectory.
+
 ## Cite
 
 If you find this helpful, please cite

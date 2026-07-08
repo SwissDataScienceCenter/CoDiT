@@ -13,16 +13,18 @@ from codit.eval_module import metrics
 
 # %%
 figs_path = os.path.join(config_paths.DATA_PATH, "figs")
-dataset = "coastline"  #'coastline'#
+dataset = "open_ocean"  #'coastline'#
 split = 'test'
 if dataset == "open_ocean":
-    models = ["naive",
+    models = [#f"gru_GRU_{dataset}_conv_adam_copernicus_current_era5_wind_hycom_current",
+            "naive",
             "hycom_parcels", 
             "glorys_parcels",
             "linear_gauss",
             "conv_net", 
             f"codit_GRU_{dataset}_conv_adam_K100_hycom_current_copernicus_current_era5_wind",
-            f"codit_Transformer_{dataset}_conv_adam_K100_hycom_current_copernicus_current_era5_wind", ] 
+            f"codit_Transformer_{dataset}_conv_adam_K100_hycom_current_copernicus_current_era5_wind", 
+            ] 
     label_dict = {
         "naive": "Naive",
         "hycom_parcels": "HYCOM",
@@ -31,16 +33,20 @@ if dataset == "open_ocean":
         "linear_gauss": "WDM",
         f"codit_GRU_{dataset}_conv_adam_K100_hycom_current_copernicus_current_era5_wind": "CoDiT (GRU)",
         f"codit_Transformer_{dataset}_conv_adam_K100_hycom_current_copernicus_current_era5_wind": "CoDiT (TF)",
+        #f"gru_GRU_{dataset}_conv_adam_copernicus_current_era5_wind_hycom_current": "GRU",
     }
     length = 72
 elif dataset == "coastline":
-    models = ["naive",
+    models = [
+            #f"gru_GRU_{dataset}_conv_adam_bathymetry_copernicus_current_era5_wind_hycom_current",
+            "naive",
             "hycom_parcels", 
             "glorys_parcels",
             "linear_gauss",
             "conv_net",
             f"codit_GRU_{dataset}_conv_adam_K100_hycom_current_copernicus_current_era5_wind_bathymetry",
-            f"codit_Transformer_{dataset}_conv_adam_K100_hycom_current_copernicus_current_era5_wind_bathymetry", ]
+            f"codit_Transformer_{dataset}_conv_adam_K100_hycom_current_copernicus_current_era5_wind_bathymetry", 
+            ]
     label_dict = {
         "naive": "Naive",
         "hycom_parcels": "HYCOM",
@@ -49,6 +55,7 @@ elif dataset == "coastline":
         "linear_gauss": "WDM",
         f"codit_GRU_{dataset}_conv_adam_K100_hycom_current_copernicus_current_era5_wind_bathymetry": "CoDiT (GRU)",
         f"codit_Transformer_{dataset}_conv_adam_K100_hycom_current_copernicus_current_era5_wind_bathymetry": "CoDiT (TF)",
+        #f"gru_GRU_{dataset}_conv_adam_bathymetry_copernicus_current_era5_wind_hycom_current": "GRU",
     }
     length = 24
 #colors = ["black", "gray", "C1", "C3", "C4"]
@@ -132,8 +139,8 @@ print(len(result_file_names))
 metrics_file = os.path.join(config_paths.RESULT_PATH, f"ddpm_{dataset}_metrics.npz")
 if os.path.exists(metrics_file):
     print(f"Loading metrics from {metrics_file}")
-    loaded = np.load(metrics_file, allow_pickle=True)
-    metrics_dict = {m: {key: loaded[f"{m}_{key}"] for key in ["mean_distance", "energy_score", "skill_score"]} for m in models}
+    flattened_loaded = np.load(metrics_file, allow_pickle=True)
+    metrics_dict = {m: {key: flattened_loaded[f"{m}_{key}"] for key in ["mean_distance", "energy_score", "skill_score"]} for m in models}
 else:
     metrics_dict = {m: {"mean_distance": [], "energy_score": [], "skill_score": []} for m in models}
     for model in models:
@@ -169,15 +176,18 @@ else:
             metrics_dict[model][key] = np.concatenate(metrics_dict[model][key], axis=0)
             
     # save the metrics_dict to a npz file
-
-    np.savez(os.path.join(config_paths.RESULT_PATH, f"ddpm_{dataset}_metrics.npz"), **metrics_dict)
+    flattened_metrics_dict = {}
+    for model in metrics_dict.keys():
+        for key in metrics_dict[model].keys():
+            flattened_metrics_dict[f"{model}_{key}"] = metrics_dict[model][key]
+    np.savez(os.path.join(config_paths.RESULT_PATH, f"ddpm_{dataset}_metrics.npz"), **flattened_metrics_dict)
 # %%
-colors = ["gray", "C1", "C8", "C3", "C7", "C4", "C2", "C5"]
+colors = ["gray", "C1", "C8", "C3", "C7", "C4", "C2", "C5", "C6"]
 if dataset == "open_ocean":
     x_ticks = [12, 24, 36, 48, 60, 72]
 elif dataset == "coastline":
     x_ticks = [6, 12, 18, 24]
-time_steps = np.arange(1, result_file["pred_coords"].shape[2] + 1)
+time_steps = np.arange(1, metrics_dict[models[0]]["mean_distance"].shape[1] + 1)
 fig = plt.figure(figsize=(6, 8))
 ax1 = plt.subplot(3, 1, 1)
 ax2 = plt.subplot(3, 1, 2, sharex=ax1)
@@ -202,7 +212,7 @@ color_dict = {
 valid_idx1 = np.ones(len(metrics_dict[models[0]]["mean_distance"]), dtype=bool)
 for model in models:
     valid_idx1 &= ~np.any(np.isnan(metrics_dict[model]["mean_distance"]), axis=1)
-valid_idx2 = np.asarray(metrics_dict['naive']['mean_distance'][:,-1] > 500)
+valid_idx2 = np.asarray(np.any(metrics_dict['naive']['mean_distance'] > 100, axis=1), dtype=bool)
 valid_idx = np.where(np.logical_and(
     valid_idx1,
     valid_idx2
@@ -322,7 +332,7 @@ if dataset == "open_ocean":
     x_ticks = np.array([12, 24, 36, 48, 60, 72])
 elif dataset == "coastline":
     x_ticks = np.array([6, 12, 18, 24])
-time_steps = np.arange(1, result_file["pred_coords"].shape[2] + 1)
+time_steps = np.arange(1, length + 1)
 plot_indices = np.where(np.isin(time_steps, x_ticks))[0]
 fig = plt.figure(figsize=(6, 8))
 ax1 = plt.subplot(3, 1, 1)
@@ -514,11 +524,12 @@ len(valid_idx)
 import pandas as pd
 results_df = {}
 for model in models:
+    print(metrics_dict[model]['skill_score'].shape)
     label = label_dict.get(model, model)
     results_df[label] = {
-        'Pred Error [km]': np.nanmean(metrics_dict[model]['mean_distance'][valid_idx,-1]) * 1e-3,
-        'Energy Score [km]': np.nanmean(metrics_dict[model]['energy_score'][valid_idx,-1]) * 1e-3,
-        'Skill Score': np.nanmean(metrics_dict[model]['skill_score'][valid_idx,-1]),
+        'Pred Error [km]': np.nanmedian(metrics_dict[model]['mean_distance'][valid_idx,-1], axis=0) * 1e-3,
+        'Energy Score [km]': np.nanmedian(metrics_dict[model]['energy_score'][valid_idx,-1], axis=0) * 1e-3,
+        'Skill Score': np.nanmedian(metrics_dict[model]['skill_score'][valid_idx,-1], axis=0),
     }
 
 results_df = pd.DataFrame(results_df).T
