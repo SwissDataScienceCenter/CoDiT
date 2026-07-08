@@ -1,11 +1,11 @@
 # Custom
 *.ini
-*config_paths.py
 data/datasets/*
 data/configs/*
 data/bathymetry/*
 wip/
 my_scripts/*
+!my_scripts/model_fitting/
 runai_scripts/*
 
 # Byte-compiled / optimized / DLL files
