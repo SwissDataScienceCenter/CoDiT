@@ -588,7 +588,8 @@ def train(
     checkpoint_mngr: Optional[CheckpointManager] = None,
     val_dataloader: Optional[DataLoader] = None,
     val_loss_list: list = [],
-    early_stopping_kwargs: dict = {"patience": 30, "min_delta": 1e-4},
+    early_stopping_patience: int = 10,
+    early_stopping_min_delta: float = 1e-4,
     writer: SummaryWriter | None = None,
     std: float | jnp.ndarray = 1.0,
 ) -> tuple:
@@ -624,7 +625,7 @@ def train(
                 val_dataloader.batch_size,
             )
 
-    early_stop = EarlyStopping(**early_stopping_kwargs)
+    early_stop = EarlyStopping(patience=early_stopping_patience, min_delta=early_stopping_min_delta)
     # train_loss = jnp.nan
     val_loss = jnp.nan
     # progress bar with losses

@@ -18,10 +18,16 @@ from tqdm import tqdm
 import warnings
 warnings.filterwarnings("ignore")
 
+# make all labels, titles, and legends larger for better readability in the saved figure:
+plt.rcParams.update({'font.size': 12})
+# and also legends
+plt.rcParams.update({'legend.fontsize': 12})
+
 # %%
 # ─── Configuration ────────────────────────────────────────────────────────────
-dataset = "open_ocean"   # "open_ocean" or "coastline"
+dataset = "coastline"   # "open_ocean" or "coastline"
 split = "test"
+metric_to_plot = "mean_distance"  # "mean_distance", "energy_score", or "skill_score"
 #metric = "energy_score"  # "mean_distance", "energy_score", or "skill_score"
 
 if dataset == "open_ocean":
@@ -62,7 +68,7 @@ color_dict = {
 }
 
 metric_labels = {
-    "mean_distance": "Mean distance [km]",
+    "mean_distance": "Prediction error [km]",
     "energy_score": "Energy score",
     "skill_score": "Skill score",
 }
@@ -207,109 +213,128 @@ def load_glorys_eke_from_config(
 # %%
 # ─── Load result files: errors + metadata ────────────────────────────────────
 np.random.seed(0)
+# if meta-data file and metrics file already exist from a previous run, you can load them directly here instead of re-processing all the configs and result files:
 
-#conv_result_file_names = os.listdir(os.path.join(result_path, "conv_net"))
-lingauss_result_file_names = os.listdir(os.path.join(result_path, "linear_gauss"))
-result_file_names = sorted(
-    #set(conv_result_file_names).intersection(set(lingauss_result_file_names))
-    lingauss_result_file_names
-)
-print(f"Result files: {len(result_file_names)}")
-
-# Models needed for the validity filter (same logic as result_plots.py)
-filter_models = []
-all_models = models_to_plot + filter_models + ["naive"]  # ensure "naive" is included for validity filtering
-metrics_dict = {m: {"mean_distance": [], "energy_score": [], "skill_score": []} for m in all_models}
-
-all_true_coords = []
-all_start_months = []
-all_drogue_status = []
-all_snippet_start_times = []
-all_glorys_eke = []
-
-for result_file_name in tqdm(result_file_names):
-    # true_coords come from hycom_parcels (as in result_plots.py)
-    hycom_file = np.load(
-        os.path.join(result_path, "hycom_parcels", result_file_name), allow_pickle=True
+if os.path.exists(os.path.join(config_paths.RESULT_PATH, f"stratified_errors_metadata_{dataset}_{split}.npz")) and os.path.exists(os.path.join(config_paths.RESULT_PATH, f"stratified_errors_metrics_{dataset}_{split}.npz")):
+    print("Loading pre-saved metadata and metrics...")
+    metadata_file = os.path.join(config_paths.RESULT_PATH, f"stratified_errors_metadata_{dataset}_{split}.npz")
+    metrics_file = os.path.join(config_paths.RESULT_PATH, f"stratified_errors_metrics_{dataset}_{split}.npz")
+    with np.load(metadata_file) as data:
+        all_true_coords = data["true_coords"]
+        all_start_months = data["start_months"]
+        all_drogue_status = data["drogue_status"]
+        all_snippet_start_times = data["snippet_start_times"]
+        all_glorys_eke = data["glorys_eke"]
+    with np.load(metrics_file) as data:
+        metrics_dict = {}
+        for model in models_to_plot + ["naive"]:
+            metrics_dict[model] = {
+                "mean_distance": data[f"{model}_mean_distance"],
+                "energy_score": data[f"{model}_energy_score"],
+                "skill_score": data[f"{model}_skill_score"],
+            }
+else:
+    #conv_result_file_names = os.listdir(os.path.join(result_path, "conv_net"))
+    lingauss_result_file_names = os.listdir(os.path.join(result_path, "linear_gauss"))
+    result_file_names = sorted(
+        #set(conv_result_file_names).intersection(set(lingauss_result_file_names))
+        lingauss_result_file_names
     )
-    true_coords = hycom_file["true_coords"]  # (N, T+1, 2)
-    N = true_coords.shape[0]
-    T = true_coords.shape[1] - 1
+    print(f"Result files: {len(result_file_names)}")
+    # Models needed for the validity filter (same logic as result_plots.py)
+    filter_models = []
+    all_models = models_to_plot + filter_models + ["naive"]  # ensure "naive" is included for validity filtering
+    metrics_dict = {m: {"mean_distance": [], "energy_score": [], "skill_score": []} for m in all_models}
 
-    # naive: predict constant position (start repeated)
-    pred_naive = np.tile(true_coords[:, None, :1], (1, 1, T, 1))
-    m_naive = metrics.get_metrics(true_coords, pred_naive)
-    for key in metrics_dict["naive"]:
-        metrics_dict["naive"][key].append(m_naive[key])
+    all_true_coords = []
+    all_start_months = []
+    all_drogue_status = []
+    all_snippet_start_times = []
+    all_glorys_eke = []
+
+    for result_file_name in tqdm(result_file_names):
+        # true_coords come from hycom_parcels (as in result_plots.py)
+        hycom_file = np.load(
+            os.path.join(result_path, "hycom_parcels", result_file_name), allow_pickle=True
+        )
+        true_coords = hycom_file["true_coords"]  # (N, T+1, 2)
+        N = true_coords.shape[0]
+        T = true_coords.shape[1] - 1
+
+        # naive: predict constant position (start repeated)
+        pred_naive = np.tile(true_coords[:, None, :1], (1, 1, T, 1))
+        m_naive = metrics.get_metrics(true_coords, pred_naive)
+        for key in metrics_dict["naive"]:
+            metrics_dict["naive"][key].append(m_naive[key])
+
+        for model in all_models:
+            if model == "naive":
+                continue
+            model_dir = os.path.join(result_path, model)
+            model_file = os.path.join(model_dir, result_file_name)
+            if not os.path.exists(model_file):
+                for key in metrics_dict[model]:
+                    metrics_dict[model][key].append(np.full((N, T), np.nan))
+                continue
+            if model == "glorys_parcels":
+                glorys_file = np.load(model_file, allow_pickle=True)
+                tc = glorys_file["true_coords"]
+                pred = glorys_file["pred_coords"]
+                # print(tc.shape, pred.shape)
+                m = metrics.get_metrics(tc, pred)
+                #print(m['mean_distance'].shape, m['energy_score'].shape, m['skill_score'].shape)
+            else:
+                result_file = np.load(model_file, allow_pickle=True)
+                pred = result_file["pred_coords"]
+                #print(true_coords.shape, pred.shape)
+                m = metrics.get_metrics(true_coords, pred)
+                #print(m['mean_distance'].shape, m['energy_score'].shape, m['skill_score'].shape)
+            for key in metrics_dict[model]:
+                metrics_dict[model][key].append(m[key])
+
+        all_true_coords.append(true_coords)
+
+        # Load trajectory metadata (dates, drogue) via the matching config
+        data_name = result_file_name.replace("_result.npz", "")
+        #try:
+        config = config_funcs.load_config(data_name, config_path_dir)
+        meta = load_trajectory_metadata(config, true_coords[:, 0, :], length)
+        # except Exception:
+        #     meta = {"start_month": np.full(N, np.nan), "drogue_status": np.full(N, np.nan)}
+        all_start_months.append(meta["start_month"])
+        all_drogue_status.append(meta["drogue_status"])
+        all_snippet_start_times.append(meta["start_times"])
+        glorys_eke = load_glorys_eke_from_config(
+            config, true_coords[:, 0, :], meta["start_times"], length
+        )
+        all_glorys_eke.append(glorys_eke)
 
     for model in all_models:
-        if model == "naive":
-            continue
-        model_dir = os.path.join(result_path, model)
-        model_file = os.path.join(model_dir, result_file_name)
-        if not os.path.exists(model_file):
-            for key in metrics_dict[model]:
-                metrics_dict[model][key].append(np.full((N, T), np.nan))
-            continue
-        if model == "glorys_parcels":
-            glorys_file = np.load(model_file, allow_pickle=True)
-            tc = glorys_file["true_coords"]
-            pred = glorys_file["pred_coords"]
-            print(tc.shape, pred.shape)
-            m = metrics.get_metrics(tc, pred)
-            print(m['mean_distance'].shape, m['energy_score'].shape, m['skill_score'].shape)
-        else:
-            result_file = np.load(model_file, allow_pickle=True)
-            pred = result_file["pred_coords"]
-            print(true_coords.shape, pred.shape)
-            m = metrics.get_metrics(true_coords, pred)
-            print(m['mean_distance'].shape, m['energy_score'].shape, m['skill_score'].shape)
         for key in metrics_dict[model]:
-            metrics_dict[model][key].append(m[key])
+            metrics_dict[model][key] = np.concatenate(metrics_dict[model][key], axis=0)
 
-    all_true_coords.append(true_coords)
-
-    # Load trajectory metadata (dates, drogue) via the matching config
-    data_name = result_file_name.replace("_result.npz", "")
-    #try:
-    config = config_funcs.load_config(data_name, config_path_dir)
-    meta = load_trajectory_metadata(config, true_coords[:, 0, :], length)
-    # except Exception:
-    #     meta = {"start_month": np.full(N, np.nan), "drogue_status": np.full(N, np.nan)}
-    all_start_months.append(meta["start_month"])
-    all_drogue_status.append(meta["drogue_status"])
-    all_snippet_start_times.append(meta["start_times"])
-    glorys_eke = load_glorys_eke_from_config(
-        config, true_coords[:, 0, :], meta["start_times"], length
+    all_true_coords = np.concatenate(all_true_coords, axis=0)  # (N_total, T+1, 2)
+    all_start_months = np.concatenate(all_start_months)
+    all_drogue_status = np.concatenate(all_drogue_status)
+    all_snippet_start_times = np.concatenate(all_snippet_start_times)
+    all_glorys_eke = np.concatenate(all_glorys_eke)  # (N_total,)
+    print(f"Total trajectories: {len(all_true_coords)}")
+    # save all this metadata for potential reuse without re-running the config loading and GLORYS interpolation:
+    metadata_out_file = os.path.join(config_paths.RESULT_PATH, f"stratified_errors_metadata_{dataset}_{split}.npz")
+    np.savez_compressed(
+        metadata_out_file,
+        true_coords=all_true_coords,
+        start_months=all_start_months,
+        drogue_status=all_drogue_status,
+        snippet_start_times=all_snippet_start_times,
+        glorys_eke=all_glorys_eke,
     )
-    all_glorys_eke.append(glorys_eke)
+    print(f"Saved metadata to {metadata_out_file}")
 
-for model in all_models:
-    for key in metrics_dict[model]:
-        metrics_dict[model][key] = np.concatenate(metrics_dict[model][key], axis=0)
-
-all_true_coords = np.concatenate(all_true_coords, axis=0)  # (N_total, T+1, 2)
-all_start_months = np.concatenate(all_start_months)
-all_drogue_status = np.concatenate(all_drogue_status)
-all_snippet_start_times = np.concatenate(all_snippet_start_times)
-all_glorys_eke = np.concatenate(all_glorys_eke)  # (N_total,)
-print(f"Total trajectories: {len(all_true_coords)}")
-# save all this metadata for potential reuse without re-running the config loading and GLORYS interpolation:
-metadata_out_file = os.path.join(config_paths.RESULT_PATH, f"stratified_errors_metadata_{dataset}_{split}.npz")
-np.savez_compressed(
-    metadata_out_file,
-    true_coords=all_true_coords,
-    start_months=all_start_months,
-    drogue_status=all_drogue_status,
-    snippet_start_times=all_snippet_start_times,
-    glorys_eke=all_glorys_eke,
-)
-print(f"Saved metadata to {metadata_out_file}")
-
-# save also the metrics_dict for reuse without re-running the metric calculations:
-metrics_out_file = os.path.join(config_paths.RESULT_PATH, f"stratified_errors_metrics_{dataset}_{split}.npz")
-np.savez_compressed(metrics_out_file, **{f"{model}_{metric}": metrics_dict[model][metric] for model in all_models for metric in metrics_dict[model]})
-print(f"Saved metrics to {metrics_out_file}")
+    # save also the metrics_dict for reuse without re-running the metric calculations:
+    metrics_out_file = os.path.join(config_paths.RESULT_PATH, f"stratified_errors_metrics_{dataset}_{split}.npz")
+    np.savez_compressed(metrics_out_file, **{f"{model}_{metric}": metrics_dict[model][metric] for model in all_models for metric in metrics_dict[model]})
+    print(f"Saved metrics to {metrics_out_file}")
 
 # %%
 # ─── EKE from GLORYS ocean current field (uo, vo) with displacement fallback ─
@@ -336,7 +361,7 @@ for metric in ["mean_distance", "energy_score", "skill_score"]:
         valid_mask &= ~np.isnan(metrics_dict[model][metric][:, -1])
     valid_mask = (
         valid_mask
-         & (metrics_dict["naive"]["mean_distance"][:, -1] > 500)
+         & np.any(metrics_dict["naive"]["mean_distance"][:, :] > 100, axis=1)
     )
     valid_idx = np.where(valid_mask)[0]
     print(f"Valid trajectories: {len(valid_idx)}")
@@ -344,7 +369,7 @@ for metric in ["mean_distance", "energy_score", "skill_score"]:
     # ─── Stratification setup ─────────────────────────────────────────────────────
     MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
                 "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-    LAT_BINS = [-60, -30, -15, 15, 30, 60]
+    LAT_BINS = [-80, -30, -15, 15, 30, 80]
     LAT_LABELS = [f"{a}° to {b}°" for a, b in zip(LAT_BINS[:-1], LAT_BINS[1:])]
     N_EKE_BINS = 5
 
@@ -376,21 +401,20 @@ for metric in ["mean_distance", "energy_score", "skill_score"]:
 
 # %%
 # ─── Stratified box plots (2 × 2) ────────────────────────────────────────────
-metric = "skill_score"  # choose which metric to plot
-fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+fig, axes = plt.subplots(2, 2, figsize=(10, 10))
 title_suffix = "open ocean" if dataset == "open_ocean" else "coastal"
 fig.suptitle(f"CoDiT prediction error stratification — {title_suffix} dataset", fontsize=13)
 
 n_models = len(models_to_plot)
 box_width = 0.6 / max(n_models, 1)
-scale = 1.0 if metric == "skill_score" else 1e-3  # scale distances to km for plotting
+scale = 1.0 if metric_to_plot == "skill_score" else 1e-3  # scale distances to km for plotting
 
 bp_style = dict(patch_artist=True, manage_ticks=False, showfliers=False)
 
 for imodel, model in enumerate(models_to_plot):
     label = label_dict.get(model, model)
     color = color_dict.get(label, "C0")
-    err = metrics_dict[model][metric][valid_idx, -1] * scale
+    err = metrics_dict[model][metric_to_plot][valid_idx, -1] * scale
     offset = (imodel - (n_models - 1) / 2) * box_width
 
     def safe_bins(masks, data):
@@ -441,7 +465,7 @@ ax_drogue, ax_eke = axes[1, 0], axes[1, 1]
 ax_lat.set_xticks(range(len(LAT_LABELS)))
 ax_lat.set_xticklabels(LAT_LABELS, rotation=45, ha="right")
 ax_lat.set_xlabel("Latitude")
-ax_lat.set_ylabel("Final " + metric_labels.get(metric, metric))
+ax_lat.set_ylabel(metric_labels.get(metric_to_plot, metric_to_plot))
 ax_lat.set_title("Latitude")
 ax_lat.set_ylim(bottom=0)
 ax_lat.grid(True, axis="y", alpha=0.3)
@@ -449,7 +473,7 @@ ax_lat.grid(True, axis="y", alpha=0.3)
 ax_month.set_xticks(range(12))
 ax_month.set_xticklabels(MONTH_NAMES, rotation=45, ha="right")
 ax_month.set_xlabel("Month")
-ax_month.set_ylabel("Final " + metric_labels.get(metric, metric))
+ax_month.set_ylabel(metric_labels.get(metric_to_plot, metric_to_plot))
 ax_month.set_title("Month")
 ax_month.set_ylim(bottom=0)
 ax_month.grid(True, axis="y", alpha=0.3)
@@ -457,26 +481,25 @@ ax_month.grid(True, axis="y", alpha=0.3)
 ax_drogue.set_xticks([0, 1])
 ax_drogue.set_xticklabels(["Drogue", "No drogue"])
 ax_drogue.set_xlabel("Drogue status")
-ax_drogue.set_ylabel("Final " + metric_labels.get(metric, metric))
+ax_drogue.set_ylabel(metric_labels.get(metric_to_plot, metric_to_plot))
 ax_drogue.set_title("Drogue vs no drogue")
 ax_drogue.set_ylim(bottom=0)
 ax_drogue.grid(True, axis="y", alpha=0.3)
 
 ax_eke.set_xticks(range(N_EKE_BINS))
-ax_eke.set_xticklabels(eke_bin_labels)
-ax_eke.set_xlabel("EKE quantile bin [cm²/s²]")
-ax_eke.set_ylabel("Final " + metric_labels.get(metric, metric))
-ax_eke.set_title(r"Eddy kinetic energy (GLORYS $u_o$/$v_o$)  $\frac{1}{2}(u_o^2+v_o^2)$")
+ax_eke.set_xticklabels(eke_bin_labels, fontsize=10)
+ax_eke.set_xlabel("TKE quantile bin [cm²/s²]")
+ax_eke.set_ylabel(metric_labels.get(metric_to_plot, metric_to_plot))
+ax_eke.set_title(r"Total kinetic energy (GLORYS)")
 ax_eke.set_ylim(bottom=0)
 ax_eke.grid(True, axis="y", alpha=0.3)
 
 if n_models > 1:
-    for ax in axes.flat:
-        ax.legend(fontsize=8)
+    axes.flat[0].legend(fontsize=10)
 
 plt.tight_layout()
 
-out_base = os.path.join(config_paths.FIG_PATH, f"stratified_errors_{dataset}_{metric}")
+out_base = os.path.join(config_paths.FIG_PATH, f"stratified_errors_{dataset}_{metric_to_plot}")
 fig.savefig(out_base + ".png", dpi=300, bbox_inches="tight")
 fig.savefig(out_base + ".pdf", bbox_inches="tight")
 print(f"Saved to {out_base}.png / .pdf")

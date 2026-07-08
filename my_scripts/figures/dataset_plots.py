@@ -1,6 +1,6 @@
 # %%
-%load_ext autoreload
-%autoreload 2
+#%load_ext autoreload
+#%autoreload 2
 import os
 from codit.data_module.dataset import (
     OceanDataset,
@@ -16,12 +16,14 @@ from jax import numpy as jnp
 data_path_train = config_paths.DATA_PATH[:-5] + 'test'
 config_path_train = os.path.join(data_path_train, 'configs')
 
-data_name = 'coastline'  # 'open_ocean' or 'coastline'
+data_name = 'open_ocean'  # 'open_ocean' or 'coastline'
 figs_path = os.path.join(config_paths.DATA_PATH, "figs")
 if data_name == 'open_ocean':
     length = 72
+    plot_title = "Open ocean dataset"
 elif data_name == 'coastline':
     length = 24
+    plot_title = "Coastline dataset"
 
 delta_metres = 10000
 num_grid_points = 16
@@ -99,11 +101,11 @@ for dataset_name in dataset_files_test:
         )
         if os.path.exists(config["dataset_path"]):
             longitudes = config["longitudes"]
-            longitudes[0] += config["context_delta"]
-            longitudes[1] -= config["context_delta"]
+            # longitudes[0] += config["context_delta"]
+            # longitudes[1] -= config["context_delta"]
             latitudes = config["latitudes"]
-            latitudes[0] += config["context_delta"]
-            latitudes[1] -= config["context_delta"]
+            # latitudes[0] += config["context_delta"]
+            # latitudes[1] -= config["context_delta"]
             test_regions_of_interest.append(
                 [longitudes, latitudes]
             )
@@ -154,7 +156,7 @@ for i, region in enumerate(train_regions_of_interest):
 for idx, region in enumerate(test_regions_of_interest):
     lon, lat = region
     patch = ax.add_patch(
-        plt.Rectangle(
+        plt.Rectangle(from matplotlib.lines import Line2D
             (lon[0], lat[0]),
             lon[1] - lon[0],
             lat[1] - lat[0],
@@ -166,107 +168,114 @@ for idx, region in enumerate(test_regions_of_interest):
         )   
     )
 ax.legend()
-ax.set_title("Open ocean dataset")
+ax.set_title(plot_title)
 plt.savefig(os.path.join(figs_path, f"{data_name}_dataset.png"), dpi=300, bbox_inches='tight', transparent=True)
 plt.savefig(os.path.join(figs_path, f"{data_name}_dataset.pdf"), dpi=300)
 plt.show()
-# %%
-import numpy as np
-fig = plt.figure(figsize=(5, 5))
-ax = fig.add_subplot(111, projection=ccrs.PlateCarree())
-ax.coastlines()
-ax.add_feature(cfeature.LAND, color="lightgray")
-
-for i, t in enumerate(dataset_plot.trajectories[:]):
-
-    if i == 107:
-        ax.plot(
-            t["coords"][:, 1],
-            t["coords"][:, 0],
-            color="k",
-            alpha=1,)
-    else:
-        ax.plot(
-            t["coords"][:, 1],
-            t["coords"][:, 0],
-            color=np.random.randint(0, 256, size=3) / 256.0,
-            alpha=0.5,
-        )
-plt.savefig(os.path.join(figs_path, f"{data_name}_trajectories.png"), dpi=300)
-plt.savefig(os.path.join(figs_path, f"{data_name}_trajectories.pdf"), dpi=300)
 
 # %%
-dataset_train_plot = OceanTrainingDataset.from_dataset(dataset_plot)
+if data_name == 'open_ocean':
+    import numpy as np
+    fig = plt.figure(figsize=(5, 5))
+    ax = fig.add_subplot(111, projection=ccrs.PlateCarree())
+    ax.coastlines()
+    ax.add_feature(cfeature.LAND, color="lightgray")
+
+    for i, t in enumerate(dataset_plot.trajectories[:]):
+
+        if i == 107:
+            ax.plot(
+                t["coords"][:, 1],
+                t["coords"][:, 0],
+                color="k",
+                alpha=1,)
+        else:
+            ax.plot(
+                t["coords"][:, 1],
+                t["coords"][:, 0],
+                color=np.random.randint(0, 256, size=3) / 256.0,
+                alpha=0.5,
+            )
+    plt.savefig(os.path.join(figs_path, f"{data_name}_trajectories.png"), dpi=300)
+    plt.savefig(os.path.join(figs_path, f"{data_name}_trajectories.pdf"), dpi=300)
 
 # %%
+if data_name == 'open_ocean':
+    dataset_train_plot = OceanTrainingDataset.from_dataset(dataset_plot)
 
-# def lonlat_to_figcoords(extent, lon, lat, width_deg=.1, height_deg=.1):
-#     """
-#     Convert lon/lat to figure coordinates for placing an inset axes.
-#     width_deg, height_deg: size of the inset in degrees.
-#     Returns: [left, bottom, width, height] for fig.add_axes
-#     """
-#     min_lon, max_lon, min_lat, max_lat = extent
-#     # Convert lon/lat to axis fraction
-#     left = (lon - min_lon) / (max_lon - min_lon)
-#     bottom = (lat - min_lat) / (max_lat - min_lat)
-#     width = width_deg / (max_lon - min_lon)
-#     height = height_deg / (max_lat - min_lat)
-#     return [left, bottom, width, height]
 
-def lonlat_to_figcoords(ax, lon, lat, width=0.1, height=0.1):
-    """
-    Convert lon/lat to figure coordinates for placing an inset axes.
-    width, height: size of the inset in figure fraction.
-    Returns: [left, bottom, width, height] for fig.add_axes
-    """
-    # Transform lon/lat to display (pixel) coordinates
-    display_coords = ax.transData.transform((lon, lat))
-    # Transform display coords to figure fraction
-    fig = ax.figure
-    fig_coords = fig.transFigure.inverted().transform(display_coords)
-    left, bottom = fig_coords
-    return [left, bottom+.1, width, height]
+    # def lonlat_to_figcoords(extent, lon, lat, width_deg=.1, height_deg=.1):
+    #     """
+    #     Convert lon/lat to figure coordinates for placing an inset axes.
+    #     width_deg, height_deg: size of the inset in degrees.
+    #     Returns: [left, bottom, width, height] for fig.add_axes
+    #     """
+    #     min_lon, max_lon, min_lat, max_lat = extent
+    #     # Convert lon/lat to axis fraction
+    #     left = (lon - min_lon) / (max_lon - min_lon)
+    #     bottom = (lat - min_lat) / (max_lat - min_lat)
+    #     width = width_deg / (max_lon - min_lon)
+    #     height = height_deg / (max_lat - min_lat)
+    #     return [left, bottom, width, height]
 
-traj, context = dataset_train_plot[107]
-cmap = plt.get_cmap("Greens")
-fig = plt.figure(figsize=(10, 5))
-ax = fig.add_subplot(111, projection=ccrs.PlateCarree())
-ax.coastlines()
-ax.plot(traj[:, 1], traj[:, 0], color="k", label="Trajectory", marker="o", markersize=5)
-ax.set_extent(
-    [
-        jnp.min(traj[:, 1]) - 0.2,
-        jnp.max(traj[:, 1]) + 0.2,
-        jnp.min(traj[:, 0]) - 0.1,
-        jnp.max(traj[:, 0]) + 0.3,
-    ]
-)
-extent = ax.get_extent(crs=ccrs.PlateCarree())
+    def lonlat_to_figcoords(ax, lon, lat, width=0.1, height=0.1):
+        """
+        Convert lon/lat to figure coordinates for placing an inset axes.
+        width, height: size of the inset in figure fraction.
+        Returns: [left, bottom, width, height] for fig.add_axes
+        """
+        # Transform lon/lat to display (pixel) coordinates
+        display_coords = ax.transData.transform((lon, lat))
+        # Transform display coords to figure fraction
+        fig = ax.figure
+        fig_coords = fig.transFigure.inverted().transform(display_coords)
+        left, bottom = fig_coords
+        return [left, bottom+.1, width, height]
 
-for i in range(0, context.shape[0], 12):
-    pos = traj[i]
-    for j in range(8):
-        # put inset at position
-        color = cmap(i / context.shape[0])
-        inset = fig.add_axes(lonlat_to_figcoords(ax, pos[1] + j*.003, pos[0]+j*.002, .1, .1))
-        inset.set_facecolor(color)
-        inset.spines["top"].set_color(color)
-        inset.spines["bottom"].set_color(color)
-        inset.spines["left"].set_color(color)
-        inset.spines["right"].set_color(color)
-        inset.set_aspect("equal")
-        inset.axes.set_xticks([])
-        inset.axes.set_yticks([])
-        inset.pcolor(context[i, ..., -j], cmap="coolwarm", rasterized=True)
-    ax.scatter(
-        pos[1],
-        pos[0],
-        color=color,
-        zorder=10,
+    traj, context = dataset_train_plot[107]
+    cmap = plt.get_cmap("Greens")
+    fig = plt.figure(figsize=(10, 5))
+    ax = fig.add_subplot(111, projection=ccrs.PlateCarree())
+    ax.coastlines()
+    ax.plot(traj[:, 1], traj[:, 0], color="k", label="Trajectory", marker="o", markersize=5)
+    ax.set_extent(
+        [
+            jnp.min(traj[:, 1]) - 0.2,
+            jnp.max(traj[:, 1]) + 0.2,
+            jnp.min(traj[:, 0]) - 0.1,
+            jnp.max(traj[:, 0]) + 0.3,
+        ]
     )
-plt.savefig(os.path.join(figs_path, f"{data_name}_trajectory_with_context.png"), dpi=300)
-plt.savefig(os.path.join(figs_path, f"{data_name}_trajectory_with_context.pdf"), dpi=300)
+    extent = ax.get_extent(crs=ccrs.PlateCarree())
+
+    for i in range(0, context.shape[0], 12):
+        pos = traj[i]
+        for j in range(8):
+            # put inset at position
+            color = cmap(i / context.shape[0])
+            inset = fig.add_axes(lonlat_to_figcoords(ax, pos[1] + j*.003, pos[0]+j*.002, .1, .1))
+            inset.set_facecolor(color)
+            inset.spines["top"].set_color(color)
+            inset.spines["bottom"].set_color(color)
+            inset.spines["left"].set_color(color)
+            inset.spines["right"].set_color(color)
+            inset.set_aspect("equal")
+            inset.axes.set_xticks([])
+            inset.axes.set_yticks([])
+            inset.pcolor(context[i, ..., -j], cmap="coolwarm", rasterized=True)
+        ax.scatter(
+            pos[1],
+            pos[0],
+            color=color,
+            zorder=10,
+        )
+        
+    # set ticks
+    ax.set_xticks(jnp.arange(np.around(extent[0], decimals=1), np.around(extent[1], decimals=1)+0.01, 0.2))
+    ax.set_yticks(jnp.arange(np.around(extent[2], decimals=1), np.around(extent[3], decimals=1)+0.01, 0.2))
+
+    plt.savefig(os.path.join(figs_path, f"{data_name}_trajectory_with_context.png"), dpi=300)
+    plt.savefig(os.path.join(figs_path, f"{data_name}_trajectory_with_context.pdf"), dpi=300)
 # %%
 from codit.data_module import data_transform
 import jax
@@ -476,7 +485,7 @@ print(f"Mean velocity: {jnp.mean(jnp.concatenate([train_velocities, test_velocit
 print(f"Mean velocity train: {jnp.mean(train_velocities):.2f} m/s")
 print(f"Mean velocity test: {jnp.mean(test_velocities):.2f} m/s")
 # %%
-config = config_funcs.load_config(dataset_files[1].split(".")[0], config_path)
+config = config_funcs.load_config(dataset_files_train[1].split(".")[0], config_path)
 dataset = OceanDataset(config, length, num_grid_points, delta_metres, interp_method)
 # %%
 train_dataset = OceanTrainingDataset.from_dataset(dataset)
@@ -675,9 +684,11 @@ for i in range(context.shape[-1]):
 plt.savefig(os.path.join(figs_path, "open_ocean_dataset_context.png"), dpi=300)
 plt.savefig(os.path.join(figs_path, "open_ocean_dataset_context.pdf"), dpi=300)
 # %%
-x0, t0, times, interpolator, traj = dataset_plot[107]
+
 
 # %%
+
+
 from jax import vmap
 from jax import config
 from codit.data_module import context_functions
@@ -685,10 +696,21 @@ from codit.data_module import data_transform
 from datetime import datetime, timedelta
 import numpy as np
 from cartopy import crs as ccrs
+from matplotlib.lines import Line2D
+from tqdm import tqdm
 config.update("jax_enable_x64", False)
-from matplotlib.patches import FancyArrowPatch
 
-
+dataset_plot = OceanDataset(
+    config_funcs.load_config(dataset_files_train[21].split(".")[0], config_path),
+    length,
+    num_grid_points,
+    delta_metres,
+    interp_method,
+    no_context=False,
+)
+# %%
+x0, t0, times, interpolator, traj = dataset_plot[107]
+# %%
 fig = plt.figure(figsize=(20, 5))
 index_range = [0, 24, 48, 72]
 x_range = np.arange(-.8, .8, 0.083) + float(traj[36, 1])
@@ -699,7 +721,7 @@ grid_x, grid_y = jnp.meshgrid(
 )
 proj = ccrs.AzimuthalEquidistant(central_longitude=traj[36, 1], central_latitude=traj[36, 0])
 transform = ccrs.PlateCarree()
-for i, idx in enumerate(index_range):
+for i, idx in tqdm(enumerate(index_range), total=len(index_range)):
     ax = fig.add_subplot(1, len(index_range), i + 1, projection=proj)
     ax.coastlines()
     grid = context_functions.make_grid(num_grid_points=2)
@@ -745,15 +767,27 @@ for i, idx in enumerate(index_range):
     ax.add_patch(patch)
     ax.set_title(f'{t0 + timedelta(hours=idx):%Y-%m-%d %H:%M} UTC')
     ax.set_aspect('equal')
-    #ax.set_xticks([])
-    #ax.set_yticks([])
+
+    gl = ax.gridlines(
+        crs=ccrs.PlateCarree(),
+        draw_labels=True,
+        linewidth=0.5,
+        color='gray',
+        alpha=0.7,
+        linestyle='--',
+        
+    )
+    gl.top_labels = False
+    gl.right_labels = False
+    gl.xlabel_style = {'size': 10}
+    gl.ylabel_style = {'size': 10}
     
-from matplotlib.lines import Line2D
+    
 
 legend_elements = [
     Line2D([0], [0], color='C1', lw=3, label='HYCOM current'),
-    Line2D([0], [0], color='C2', lw=3, label='Copernicus marine current'),
-    Line2D([0], [0], color='C3', lw=3, label='Wind field'),
+    Line2D([0], [0], color='C2', lw=3, label='GLORYS current'),
+    Line2D([0], [0], color='C3', lw=3, label='ERA5 Wind field'),
 ]
 
 
@@ -761,6 +795,7 @@ ax.legend(handles=legend_elements, loc='upper left')
 
 cax = fig.add_axes([0.92, 0.15, 0.01, 0.7])
 plt.colorbar(im, cax=cax, label='Bathymetry (km)')
+fig.tight_layout(rect=[0, 0, 0.9, 1])
 plt.savefig(os.path.join(figs_path, "open_ocean_dataset_trajectory_example.png"), dpi=300)
 plt.savefig(os.path.join(figs_path, "open_ocean_dataset_trajectory_example.pdf"), dpi=300)
 # %%

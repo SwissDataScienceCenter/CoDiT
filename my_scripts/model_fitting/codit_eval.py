@@ -34,12 +34,15 @@ if __name__ == "__main__":
     parser.add_argument("--input_vars", nargs='+', type=str, 
                     default=["hycom_current", "copernicus_current", "era5_wind", "bathymetry"], 
                     help="Input variables for the model")
+    parser.add_argument("--run_name", type=str, default="", help="Optional run name for logging and saving results")
     args = parser.parse_args()
     np.random.seed(0)
     
     input_vars = args.input_vars
     input_var_str = "_".join(input_vars)
     model_name = f"codit_{args.model_type}_{args.dataset}_{args.context_encoder_type}_{args.optimizer}_K{args.K}_{input_var_str}"
+    if args.run_name:
+        model_name += f"_{args.run_name}"
     print(f"Model name: {model_name}")
     if args.dataset == "open_ocean":
         config_path = os.path.join(
