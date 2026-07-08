@@ -2,7 +2,12 @@ import datetime
 
 from jax import numpy as jnp
 import numpy as np
-import parcels, zarr
+try:
+    import parcels
+    import zarr
+except ImportError:
+    parcels = None  # type: ignore[assignment]
+    zarr = None  # type: ignore[assignment]
 import xarray as xr
 
 from codit.data_module import data_transform
