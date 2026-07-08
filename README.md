@@ -1,70 +1,130 @@
 # CoDiT: Conditional Diffusion Trajectory Predictions
 
-This code provides a conditional diffusion framework to predict floating drifters on the Ocean surface for multiple days.
-At the moment, this repository only allows for using trained models for predictions, but soon we will also add the training code. It is recommended to run it on a GPU node.
+CoDiT is a conditional denoising diffusion framework for multi-day ocean drifter
+trajectory prediction. It forecasts the drift of floating objects on the ocean
+surface, conditioned on ocean currents (HYCOM, Copernicus/GLORYS), winds (ERA5),
+bathymetry (GEBCO), and initial GPS position.
 
-## Setup
+## Quick Start
 
-### 1. Setting up credentials for data download
+### 1. Set up the environment
 
-This repo comes with a VSCode devcontainer and it is recommended to start in the built container. However, 
-before building the container one should create a `config.ini` with the following content
+**Option A — pip (recommended):**
 
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -e .
 ```
+
+**Option B — conda / mamba:**
+
+```bash
+conda env create -f environment.yml   # or: mamba env create -f environment.yml
+conda activate codit
+```
+
+**GPU support (optional):**
+
+```bash
+pip install --upgrade "jax[cuda12]"
+```
+
+### 2. Download data
+
+```bash
+# Download both datasets and bathymetry (~101 GB total)
+python scripts/download_data.py --dataset all --bathymetry
+```
+
+To download a single dataset:
+
+```bash
+python scripts/download_data.py --dataset open_ocean
+python scripts/download_data.py --dataset coastline
+```
+
+Trained model checkpoints are already included in the repository under
+`data/trained_models/`.
+
+### 3. Reproduce paper results
+
+```bash
+bash scripts/reproduce_results.sh
+```
+
+This evaluates all models (Linear Gaussian, CoDiT-GRU, CoDiT-Transformer)
+on both datasets using the `--evaluate_subset` flag for faster runs. Results
+are saved as `.npz` files under `data/results/`.
+
+To run a single evaluation:
+
+```bash
+python my_scripts/model_fitting/codit_eval.py \
+    --dataset open_ocean --split test \
+    --model_name codit_GRU_open_ocean --evaluate_subset
+
+python my_scripts/model_fitting/lingauss_eval.py \
+    --dataset coastline --split test
+```
+
+### 4. Path configuration
+
+Paths resolve from the `CODIT_DATA_PATH` environment variable. If unset,
+defaults to `<repo_root>/data`.
+
+```bash
+export CODIT_DATA_PATH=/path/to/your/data
+```
+
+For API credentials (only needed for downloading new ocean data, not for
+reproducing results):
+
+```bash
+export CODIT_CREDENTIALS_PATH=/path/to/config.ini
+```
+
+The `config.ini` should contain Copernicus CDS and Marine Service credentials:
+
+```ini
 [copernicus]
 user = <cds-email>
 password = <cds-password>
 url = https://cds.climate.copernicus.eu/api
-key =  <cds-key>
+key = <cds-key>
 
 [copernicusmarine]
-username = <copernicusmarine-username>
-password = <copernicusmarine-password>
+username = <username>
+password = <password>
 ```
 
-where you have to fill your credentials for the [Climate Data Storage](https://cds.climate.copernicus.eu/how-to-api) and [Copernicus Marine Service](https://help.marine.copernicus.eu/en/articles/7949409-copernicus-marine-toolbox-introduction). 
-It is recommended to put the `config.ini` file somewhere outside the CoDiT folder, so you do not commit it accidentely.
+## Project Structure
 
-### 2. Setting the paths
-
-Then make sure you set the paths as you want them in `CoDiT/src/codit/data_module/config_paths.py`. In particular that the credential path is set write.
-
-### 3. Downloading bathymetry data
-
-The CoDiT framework makes also use of bathymetry from [GEBCO](https://www.gebco.net/) which is static. You can download a version [here](https://polybox.ethz.ch/index.php/s/Gp6zM2JindN6nHA) and unpack the `bathymetry.zip` file this under `<DATA_PATH>/`, where `<DATA_PATH>` is the one you set in step 2.
-
-### 4. Build the container and test
-
-Now use VSCode to build the container and try to run the notebook `CoDiT/notebooks/get_started.ipynb`. If you set up everything correctly it should run smoothly.
-
-__Note__: If you want GPU support go to the `.devcontainer/Dockerfile` and uncomment the line
- ```
-# RUN pip install --upgrade "jax[cuda12]"
 ```
-and rebuild the container.
-
-## Direct Coordinate Model
-
-Train the non-diffusion autoregressive model with:
-
-```bash
-micromamba run -n codit python my_scripts/model_fitting/direct_train.py --dataset open_ocean --model_type GRU
+CoDiT/
+├── src/codit/                  # Source code
+│   ├── codit_module/           # Diffusion logic, scheduler, noise models
+│   ├── data_module/            # Data loading, transforms, context extraction
+│   ├── model_module/           # CoDiT, Linear Gaussian, CNN, physics baselines
+│   └── eval_module/            # Evaluation metrics
+├── my_scripts/model_fitting/   # Training and evaluation scripts
+├── scripts/                    # Download and reproduction scripts
+├── data/
+│   ├── trained_models/         # Shipped model checkpoints (~4 MB total)
+│   ├── datasets/               # Downloaded NetCDF datasets (not in git)
+│   ├── configs/                # Downloaded YAML configs (not in git)
+│   └── bathymetry/             # Downloaded GEBCO data (not in git)
+├── notebooks/                  # Tutorial notebooks
+└── paper/                      # CoDiT paper (PDF, TeX)
 ```
-
-Evaluate it with:
-
-```bash
-micromamba run -n codit python my_scripts/model_fitting/direct_eval.py --dataset open_ocean --evaluate_subset
-```
-
-The direct model reuses the CoDiT context encoder and autoregressive decoder, but predicts normalized coordinates directly with an MSE loss instead of denoising a sampled diffusion trajectory.
 
 ## Cite
 
-If you find this helpful, please cite
+If you find this helpful, please cite:
 
-...
+> [Citation to be added upon publication]
 
 ## Acknowledgements
 
-Global Drifter Program, HYCOM, copernicusmarine, CDS, GEBCO, SDSC project
+Global Drifter Program, HYCOM, Copernicus Marine Service, CDS, GEBCO,
+Swiss Data Science Center (SDSC)

@@ -53,8 +53,7 @@ if __name__ == "__main__":
         if config["start_date"].year >= 2020 and os.path.exists(config["dataset_path"]):
             val_datasets.append(dataset_name)
 
-    model = LinearGaussModel(name=f"linear_gauss_{args.dataset}", params={})
-    model.import_trained_model(f'linear_gauss_{args.dataset}')
+    model = LinearGaussModel.import_trained_model(f'linear_gauss_{args.dataset}')
     #export_path = os.path.join(config_paths.CONV_NET_PATH, 'trained_models/')
     #model = ConvNetModel.import_trained_model(f'cnn_{args.dataset}', import_path=export_path)
 
@@ -105,7 +104,7 @@ if __name__ == "__main__":
         true_coords = jnp.concatenate(true_coords, axis=0)
         jnp.savez(
             os.path.join(result_path, f"{data_name}_result.npz"),
-            distance=distance,
+            distance=distances,
             pred_coords=pred_coords,
             true_coords=true_coords,
         )

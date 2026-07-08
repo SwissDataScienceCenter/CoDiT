@@ -35,14 +35,18 @@ if __name__ == "__main__":
                     default=["hycom_current", "copernicus_current", "era5_wind", "bathymetry"], 
                     help="Input variables for the model")
     parser.add_argument("--run_name", type=str, default="", help="Optional run name for logging and saving results")
+    parser.add_argument("--model_name", type=str, default="", help="Override model name (must match directory in data/trained_models/)")
     args = parser.parse_args()
     np.random.seed(0)
     
-    input_vars = args.input_vars
-    input_var_str = "_".join(input_vars)
-    model_name = f"codit_{args.model_type}_{args.dataset}_{args.context_encoder_type}_{args.optimizer}_K{args.K}_{input_var_str}"
-    if args.run_name:
-        model_name += f"_{args.run_name}"
+    if args.model_name:
+        model_name = args.model_name
+    else:
+        input_vars = args.input_vars
+        input_var_str = "_".join(input_vars)
+        model_name = f"codit_{args.model_type}_{args.dataset}_{args.context_encoder_type}_{args.optimizer}_K{args.K}_{input_var_str}"
+        if args.run_name:
+            model_name += f"_{args.run_name}"
     print(f"Model name: {model_name}")
     if args.dataset == "open_ocean":
         config_path = os.path.join(
