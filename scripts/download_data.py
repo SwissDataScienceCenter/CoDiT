@@ -60,6 +60,12 @@ def download_dataset(dataset: str, data_path: str) -> None:
     print(f"\n=== Downloading {dataset} ===")
     urls = DATASET_URLS[dataset]
     for split, url in urls.items():
+        if "XXXXXXX" in url:
+            raise RuntimeError(
+                f"Dataset URLs for '{dataset}' are not yet available. "
+                "They will be populated after Zenodo upload. "
+                "Bathymetry can be downloaded now with --bathymetry."
+            )
         if split == "configs":
             dest_dir = os.path.join(data_path, "configs")
         else:
