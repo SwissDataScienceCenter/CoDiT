@@ -4,6 +4,7 @@ import pytest
 from codit.data_module.data_transform import (
     haversine_distance,
     inverse_haversine,
+    transform_traj_to_metre,
     velocity_vector_from_pos_time,
 )
 
@@ -87,3 +88,26 @@ class TestVelocityVectorFromPosTime:
         vel = velocity_vector_from_pos_time(pos1, pos2, time_in_seconds=3600.0)
         speed = jnp.linalg.norm(vel)
         assert float(speed) > 0.0
+
+
+class TestTransformTrajToMetre:
+    def test_returns_correct_shape(self):
+        T = 11
+        traj = jnp.zeros((T, 2))
+        result = transform_traj_to_metre(traj)
+        assert result.shape == (T, 2)
+
+    def test_stationary_gives_zero(self):
+        T = 5
+        traj = jnp.tile(jnp.array([48.8566, 2.3522]), (T, 1))
+        result = transform_traj_to_metre(traj)
+        assert jnp.allclose(result, jnp.zeros((T, 2)), atol=1e-3)
+
+    def test_moving_trajectory_nonzero(self):
+        """A trajectory moving 1 degree north per step should give nonzero displacements."""
+        T = 4
+        lats = jnp.arange(T, dtype=jnp.float32)
+        traj = jnp.stack([lats, jnp.zeros(T)], axis=-1)
+        result = transform_traj_to_metre(traj)
+        # All rows after the first should have nonzero lat-component
+        assert jnp.all(jnp.abs(result[1:, 0]) > 0.0)

@@ -19,6 +19,7 @@ from tqdm import tqdm
 from codit.codit_module import noising_functions
 from codit.codit_module.brownian_noise_models import WalkNoiseModel
 from codit.data_module import data_transform
+from codit.data_module.data_transform import transform_traj_to_metre
 
 ##### Model stuff #####
 
@@ -503,14 +504,6 @@ class Autoregressive_Denoiser(nn.Module):
 
 
 ##### train
-
-
-def transform_traj_to_metre(traj: jnp.ndarray) -> jnp.ndarray:
-    velocity_vectors = jax.vmap(
-        data_transform.velocity_vector_from_pos_time, in_axes=(None, 0, None)
-    )(traj[0], traj, 3600)
-    traj_in_metres = velocity_vectors * 3600
-    return traj_in_metres
 
 
 def transform_batch(torch_batch: tuple, std: float | jnp.ndarray) -> dict:

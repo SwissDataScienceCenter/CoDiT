@@ -33,7 +33,10 @@ from codit.codit_module.diffusion_models import (
     Transformer,
 )
 from codit.data_module import config_paths, data_transform
-from codit.data_module.data_transform import velocity_vector_from_pos_time
+from codit.data_module.data_transform import (
+    transform_traj_to_metre,
+    velocity_vector_from_pos_time,
+)
 from codit.data_module.dataset import OceanDataset, OceanTrainingDataset
 from codit.model_module.base_model import BaseTrajectoryModel
 
@@ -278,14 +281,6 @@ def train(
         pbar.update(1)
 
     return params, opt_state, loss_list, val_loss_list
-
-
-def transform_traj_to_metre(traj: jnp.ndarray) -> jnp.ndarray:
-    velocity_vectors = vmap(
-        data_transform.velocity_vector_from_pos_time, in_axes=(None, 0, None)
-    )(traj[0], traj, 3600)
-    traj_in_metres = velocity_vectors * 3600
-    return traj_in_metres
 
 
 def transform_batch(torch_batch: tuple, std: float) -> dict:

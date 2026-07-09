@@ -19,16 +19,9 @@ from codit.codit_module.direct_models import (
     AutoregressiveTransformerDirectPredictor,
 )
 from codit.data_module import config_paths, data_transform
+from codit.data_module.data_transform import transform_traj_to_metre
 from codit.data_module.dataset import OceanDataset, OceanTrainingDataset
 from codit.model_module.base_model import BaseTrajectoryModel
-
-
-def transform_traj_to_metre(traj: jnp.ndarray) -> jnp.ndarray:
-    velocity_vectors = vmap(
-        data_transform.velocity_vector_from_pos_time,
-        in_axes=(None, 0, None),
-    )(traj[0], traj, 3600)
-    return velocity_vectors * 3600
 
 
 def make_teacher_forced_batch(
@@ -88,7 +81,9 @@ class DirectPredictionModel(BaseTrajectoryModel):
         params = default_params | params
         super().__init__(name, params)
         self.type = "direct_prediction"
-        self.ckpt_dir = os.path.join(config_paths.MODEL_PATH, "trained_models", self.name)
+        self.ckpt_dir = os.path.join(
+            config_paths.MODEL_PATH, "trained_models", self.name
+        )
 
         if params["model_type"] == "GRU":
             self.model = AutoregressiveDirectPredictor(
@@ -138,20 +133,26 @@ class DirectPredictionModel(BaseTrajectoryModel):
             "min_delta": 1e-4,
         }
 
-        traj_in_metres = vmap(transform_traj_to_metre)(jnp.asarray(train_dataset.trajectories))
+        traj_in_metres = vmap(transform_traj_to_metre)(
+            jnp.asarray(train_dataset.trajectories)
+        )
         self.std = jnp.std(traj_in_metres[:, -1], axis=0)
 
         train_dataset.set_context_var_idx(self.var_idx)
         val_dataset.set_context_var_idx(self.var_idx)
         train_loader = data.DataLoader(
             train_dataset,
-            batch_size=train_params.get("batch_size", default_train_params["batch_size"]),
+            batch_size=train_params.get(
+                "batch_size", default_train_params["batch_size"]
+            ),
             shuffle=True,
             drop_last=True,
         )
         val_loader = data.DataLoader(
             val_dataset,
-            batch_size=train_params.get("batch_size", default_train_params["batch_size"]),
+            batch_size=train_params.get(
+                "batch_size", default_train_params["batch_size"]
+            ),
             shuffle=False,
             drop_last=True,
         )
@@ -171,7 +172,9 @@ class DirectPredictionModel(BaseTrajectoryModel):
             train=True,
         )
 
-        optimizer_name = train_params.get("optimizer", default_train_params["optimizer"])
+        optimizer_name = train_params.get(
+            "optimizer", default_train_params["optimizer"]
+        )
         learning_rate = train_params.get(
             "learning_rate", default_train_params["learning_rate"]
         )
@@ -221,8 +224,12 @@ class DirectPredictionModel(BaseTrajectoryModel):
         best_params = params
         best_metric = jnp.inf
         early_stop = EarlyStopping(
-            min_delta=float(train_params.get("min_delta", default_train_params["min_delta"])),
-            patience=int(train_params.get("patience", default_train_params["patience"])),
+            min_delta=float(
+                train_params.get("min_delta", default_train_params["min_delta"])
+            ),
+            patience=int(
+                train_params.get("patience", default_train_params["patience"])
+            ),
         )
         for epoch_idx in range(num_epochs):
             logging.info(f"Epoch {epoch_idx + 1}/{num_epochs}")
@@ -246,11 +253,15 @@ class DirectPredictionModel(BaseTrajectoryModel):
                 metric = float(jnp.mean(jnp.asarray(train_losses)))
 
             if metric < best_metric:
-                logging.info(f"New best metric: {best_metric:.4f} Improvement: {best_metric - metric:.4f}")
-                print(f"New best metric: {best_metric:.4f} Improvement: {best_metric - metric:.4f}")
+                logging.info(
+                    f"New best metric: {best_metric:.4f} Improvement: {best_metric - metric:.4f}"
+                )
+                print(
+                    f"New best metric: {best_metric:.4f} Improvement: {best_metric - metric:.4f}"
+                )
                 best_metric = metric
                 best_params = params
-                
+
             early_stop = early_stop.update(metric)
             if early_stop.should_stop:
                 break
@@ -309,7 +320,9 @@ class DirectPredictionModel(BaseTrajectoryModel):
     ) -> jnp.ndarray:
         del key
         if num_samples != 1:
-            raise ValueError("DirectPredictionModel.predict currently supports num_samples=1 only.")
+            raise ValueError(
+                "DirectPredictionModel.predict currently supports num_samples=1 only."
+            )
         if self.nn_params is None or self.std is None:
             raise ValueError("Load or train the model before calling predict.")
 

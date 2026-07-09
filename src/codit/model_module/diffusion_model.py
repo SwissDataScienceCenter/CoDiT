@@ -36,6 +36,7 @@ from codit.codit_module.brownian_noise_models import (
 
 # Suppress the SerializationWarning
 from codit.data_module import config_paths, data_transform
+from codit.data_module.data_transform import transform_traj_to_metre
 from codit.data_module.dataset import OceanDataset, OceanTrainingDataset
 from codit.model_module.base_model import BaseTrajectoryModel
 
@@ -301,14 +302,6 @@ class CoDiTModel(BaseTrajectoryModel):
             "early_stopping_patience": 10,
             "early_stopping_min_delta": 1e-4,
         }
-
-        # todo: This is not very nice, should happen in the dataset or more downstream
-        def transform_traj_to_metre(traj: jnp.ndarray) -> jnp.ndarray:
-            velocity_vectors = vmap(
-                data_transform.velocity_vector_from_pos_time, in_axes=(None, 0, None)
-            )(traj[0], traj, 3600)
-            traj_in_metres = velocity_vectors * 3600
-            return traj_in_metres
 
         # assert isinstance(train_dataset.trajectories, jnp.ndarray), (
         #     "Trajectories should be a jnp.ndarray, "
