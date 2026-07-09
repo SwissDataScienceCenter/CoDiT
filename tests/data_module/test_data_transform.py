@@ -48,14 +48,20 @@ class TestInverseHaversine:
         assert jnp.allclose(new_pos, pos, atol=1e-6)
 
     def test_round_trip_100km_north(self):
-        """Move 100 km north, measure haversine from origin to new position ≈ 100 km."""
-        pos = jnp.array([0.0, 0.0])
+        """Move 100 km north from Paris, verify haversine distance ≈ 100 km."""
+        pos = jnp.array([48.8566, 2.3522])  # Paris
         bearing = 0.0  # north
         distance_m = 100_000.0
-        delta = inverse_haversine(pos, distance_m, bearing)
-        new_pos = pos + delta
+        new_pos = inverse_haversine(pos, distance_m, bearing)
         recovered_dist = haversine_distance(pos, new_pos)
         assert float(recovered_dist) == pytest.approx(distance_m, rel=0.01)
+
+    def test_returns_absolute_position_not_delta(self):
+        """Verify that inverse_haversine returns absolute position, not delta."""
+        pos = jnp.array([48.8566, 2.3522])  # Paris
+        result = inverse_haversine(pos, 100_000.0, 0.0)
+        # Absolute position must be far from origin (not near-zero like a delta)
+        assert float(jnp.linalg.norm(result)) > 1.0
 
     def test_returns_2d_vector(self):
         pos = jnp.array([0.0, 0.0])
