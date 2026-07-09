@@ -9,4 +9,6 @@ from .diffusion_model import *
 from .hycom_model import *
 from .glorys_model import *
 from .linear_gauss_model import *
+from .currents_parcels_model import *
 from .hycom_parcels_model import *
+from .glorys_parcels_model import *
