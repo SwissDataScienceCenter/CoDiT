@@ -2,6 +2,9 @@
 import argparse
 import os
 
+import jax
+import numpy as np
+
 from codit.data_module import config_paths
 from codit.data_module.dataset import OceanTrainingDataset
 from codit.model_module.linear_gauss_model import LinearGaussModel
@@ -16,7 +19,11 @@ if __name__ == "__main__":
     parser.add_argument("--num_batches_per_epoch", type=int, default=100)
     parser.add_argument("--batch_size", type=int, default=128)
     parser.add_argument("--train_size", type=float, default=0.95)
+    parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
+
+    np.random.seed(args.seed)
+    key = jax.random.PRNGKey(args.seed)
 
     if args.dataset == "open_ocean":
         dataset = OceanTrainingDataset.from_disk(

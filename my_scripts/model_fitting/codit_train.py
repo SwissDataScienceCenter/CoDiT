@@ -4,6 +4,9 @@
 import argparse
 import os
 
+import jax
+import numpy as np
+
 from codit.data_module import config_paths
 from codit.data_module.dataset import OceanTrainingDataset
 from codit.model_module.diffusion_model import CoDiTModel
@@ -28,11 +31,24 @@ if __name__ == "__main__":
     parser.add_argument("--optimizer", type=str, default="adam")  # adam, adamw, sgd
     parser.add_argument("--scheduler", type=str, default="constant")  # constant, cosine
     parser.add_argument("--K", type=int, default=100)  # number of diffusion steps
-    parser.add_argument("--input_vars", nargs='+', type=str, 
-                        default=["hycom_current", "copernicus_current", "era5_wind", "bathymetry"], 
-                        help="Input variables for the model")
-    parser.add_argument("--run_name", type=str, default="", help="Optional run name for logging and saving results")
+    parser.add_argument(
+        "--input_vars",
+        nargs="+",
+        type=str,
+        default=["hycom_current", "copernicus_current", "era5_wind", "bathymetry"],
+        help="Input variables for the model",
+    )
+    parser.add_argument(
+        "--run_name",
+        type=str,
+        default="",
+        help="Optional run name for logging and saving results",
+    )
+    parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
+
+    np.random.seed(args.seed)
+    key = jax.random.PRNGKey(args.seed)
 
     print("Loading dataset")
     if args.dataset == "open_ocean":
@@ -71,7 +87,7 @@ if __name__ == "__main__":
             "model_type": args.model_type,
             "context_encoder_type": args.context_encoder_type,
             "K": args.K,
-            "vars": args.input_vars
+            "vars": args.input_vars,
         },
     )
     if args.scheduler == "cosine":
@@ -83,11 +99,13 @@ if __name__ == "__main__":
         )
     else:
         scheduler = None
-        
+
     try:
-        model.import_trained_model(model.name) 
+        model.import_trained_model(model.name)
     except FileNotFoundError:
-        print(f'Could not find {model.name} in {config_paths.MODEL_PATH}. Re-training model.')
+        print(
+            f"Could not find {model.name} in {config_paths.MODEL_PATH}. Re-training model."
+        )
         model.fit(
             train_dataset,
             val_dataset,

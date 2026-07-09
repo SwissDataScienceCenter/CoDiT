@@ -8,7 +8,6 @@ import warnings
 from functools import partial
 
 import jax
-import numpy as np
 import optax
 import orbax.checkpoint
 import orbax.checkpoint as ocp
@@ -41,10 +40,8 @@ from codit.data_module.dataset import OceanDataset, OceanTrainingDataset
 from codit.model_module.base_model import BaseTrajectoryModel
 
 warnings.filterwarnings("ignore", category=xr.SerializationWarning)
-np.random.seed(0)
 
 # config.update("jax_enable_x64", True)
-warnings.filterwarnings(action="ignore")
 
 
 def backward_denoising_step(

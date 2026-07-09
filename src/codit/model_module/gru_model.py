@@ -6,7 +6,6 @@ from functools import partial
 from typing import Optional
 
 import jax
-import numpy as np
 import optax
 import orbax.checkpoint as ocp
 import xarray as xr
@@ -39,8 +38,6 @@ from codit.data_module.dataset import OceanDataset, OceanTrainingDataset
 from codit.model_module.base_model import BaseTrajectoryModel
 
 warnings.filterwarnings("ignore", category=xr.SerializationWarning)
-np.random.seed(0)
-warnings.filterwarnings(action="ignore")
 
 
 @partial(jax.jit, static_argnums=(1,))
@@ -96,7 +93,9 @@ class Autoregressive(nn.Module):
 
         t_history, t_pred = x["history_time"], x["prediction_time"]
         t = jnp.concatenate([t_history, t_pred], axis=-2)
-        time_enc = TemporalEncoding(K=self.T, num_freqs=self.time_emb_dim)(t.squeeze(-1))
+        time_enc = TemporalEncoding(K=self.T, num_freqs=self.time_emb_dim)(
+            t.squeeze(-1)
+        )
 
         history_context = x["history_context"]
         if self.context_encoder_type == "conv":
@@ -106,7 +105,9 @@ class Autoregressive(nn.Module):
         elif self.context_encoder_type == "gap":
             context_enc = GAPContextEncoder(output_dim=self.hidden_size)
         else:
-            raise ValueError(f"Unknown context encoder type: {self.context_encoder_type}")
+            raise ValueError(
+                f"Unknown context encoder type: {self.context_encoder_type}"
+            )
 
         history_context_enc = context_enc(history_context)
         history_enc = history_module(history_context_enc, x["history_target_vals"], t)
@@ -120,7 +121,9 @@ class Autoregressive(nn.Module):
         if self.context:
             prediction_context = x["prediction_context"]
             prediction_context_enc = context_enc(prediction_context)
-            context = jnp.concatenate([history_context_enc, prediction_context_enc], axis=-2)
+            context = jnp.concatenate(
+                [history_context_enc, prediction_context_enc], axis=-2
+            )
             context = jnp.concatenate(
                 [jnp.zeros((1, context.shape[-1])), context[..., :-1, :]], axis=-2
             )
@@ -452,7 +455,9 @@ class AutoregressiveModel(BaseTrajectoryModel):
             "history_time": jnp.arange(1, dtype=jnp.float32)[:, None],
             "history_context": data_sample[1][:1],
             "prediction_context": data_sample[1][:-1],
-            "prediction_time": jnp.arange(1, len(trajectory), dtype=jnp.float32)[:, None],
+            "prediction_time": jnp.arange(1, len(trajectory), dtype=jnp.float32)[
+                :, None
+            ],
         }
         params = self.model.init(
             key,
@@ -463,11 +468,15 @@ class AutoregressiveModel(BaseTrajectoryModel):
 
         scheduler = train_params.get("scheduler", default_train_params["scheduler"])
         if scheduler is None:
-            lr = train_params.get("learning_rate", default_train_params["learning_rate"])
+            lr = train_params.get(
+                "learning_rate", default_train_params["learning_rate"]
+            )
         else:
             lr = scheduler
 
-        optimizer_type = train_params.get("optimizer", default_train_params["optimizer"])
+        optimizer_type = train_params.get(
+            "optimizer", default_train_params["optimizer"]
+        )
         if optimizer_type == "adam":
             optimizer = optax.adam(learning_rate=lr)
         elif optimizer_type == "adamw":
@@ -500,9 +509,12 @@ class AutoregressiveModel(BaseTrajectoryModel):
                 params,
                 opt_state,
                 key,
-                num_epochs=train_params.get("num_epochs", default_train_params["num_epochs"]),
+                num_epochs=train_params.get(
+                    "num_epochs", default_train_params["num_epochs"]
+                ),
                 num_batches_per_epoch=train_params.get(
-                    "num_batches_per_epoch", default_train_params["num_batches_per_epoch"]
+                    "num_batches_per_epoch",
+                    default_train_params["num_batches_per_epoch"],
                 ),
                 loss_list=loss_list,
                 checkpoint_mngr=mngr,
@@ -546,7 +558,9 @@ class AutoregressiveModel(BaseTrajectoryModel):
         key: jax.Array = random.PRNGKey(0),
     ) -> jnp.ndarray:
         if self.nn_params is None:
-            raise ValueError("Model parameters are not loaded. Train or load the model before predict.")
+            raise ValueError(
+                "Model parameters are not loaded. Train or load the model before predict."
+            )
 
         times = self._get_prediction_steps(start_time, prediction_length)
         prediction_length = len(times) - 1
@@ -675,7 +689,9 @@ class AutoregressiveModel(BaseTrajectoryModel):
 
         nn_params_path = os.path.join(model_path, "nn_params.pkl")
         if not os.path.exists(nn_params_path):
-            raise FileNotFoundError(f"NN parameters file {nn_params_path} does not exist.")
+            raise FileNotFoundError(
+                f"NN parameters file {nn_params_path} does not exist."
+            )
 
         with open(nn_params_path, "rb") as f:
             nn_params = pickle.load(f)
