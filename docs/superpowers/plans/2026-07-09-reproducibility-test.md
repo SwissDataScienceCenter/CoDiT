@@ -4,78 +4,31 @@
 
 **Goal:** Add an integration test that runs the eval pipeline on 3 trajectories for both LinearGauss and CoDiT-GRU on `open_ocean` and asserts mean Haversine error is within ±10% of a known reference.
 
-**Architecture:** Two tasks. Task 1 creates symlinks so the existing open_ocean data matches the expected directory layout, then runs the CoDiT model once to establish its reference value. Task 2 writes and runs the test file. Single commit at the end.
+**Architecture:** Establish the CoDiT reference value by running the shipped checkpoint once, then write and run the test file. Single commit at the end.
 
-**Tech Stack:** pytest, JAX/Flax, codit (local package), micromamba `codit` env, bash.
+**Tech Stack:** pytest, JAX/Flax, codit (local package), micromamba `codit` env.
 
 ## Global Constraints
 
-- Python env: `micromamba run -n codit python ...` / `micromamba run -n codit pytest ...`
+- **Prerequisite:** `2026-07-09-dataset-reorganisation` plan must be complete before starting
 - `CODIT_DATA_PATH=/mydata/adopt/christian/adopt/data_final` for all steps
-- All code goes on the `dev` branch — no new branches
-- Do not modify `src/codit/data_module/config_funcs.py` — `load_config` is already correct
-- Test file must follow the skip-guard pattern in `tests/integration/test_checkpoint_loading.py`
+- Python: `micromamba run -n codit python ...`
+- Tests: `micromamba run -n codit pytest ...`
+- All commits on `dev` branch
 - `num_samples=100`, `length=72`, indices `[0, 50, 100]`, patch `open_ocean_patch_1_year_2021`
+- Follow the skip-guard pattern in `tests/integration/test_checkpoint_loading.py`
 
 ---
 
-## Task 1: Create symlinks and establish CoDiT reference value
+## Task 1: Establish CoDiT reference value
 
 **Files:**
-- No source files changed
-- New: `scripts/create_symlinks.sh` (documents the one-time setup step)
+- No files created or modified
 
 **Interfaces:**
 - Produces: `CODIT_REF_M` float (printed to stdout, copied into Task 2)
 
-- [ ] **Step 1: Create the symlink script**
-
-Create `scripts/create_symlinks.sh`:
-
-```bash
-#!/usr/bin/env bash
-# One-time setup: create symlinks so open_ocean data matches the canonical layout.
-# Expected layout:  DATA_PATH/datasets/open_ocean/{split}/{name}/datasets/{name}/
-# Actual layout:    DATA_PATH/datasets/open_ocean/{split}/datasets/{name}/
-#
-# Run once:  CODIT_DATA_PATH=/path/to/data bash scripts/create_symlinks.sh
-set -euo pipefail
-
-DATA_PATH="${CODIT_DATA_PATH:?must set CODIT_DATA_PATH}"
-
-for split in train val test; do
-  base="$DATA_PATH/datasets/open_ocean/$split"
-  [ -d "$base/datasets" ] || continue
-  for patch in "$base/datasets"/*/; do
-    name=$(basename "$patch")
-    target="$base/$name"
-    [ -e "$target" ] && continue
-    mkdir -p "$target"
-    ln -s ../datasets "$target/datasets"
-    echo "Created: $target/datasets -> ../datasets"
-  done
-done
-echo "Done."
-```
-
-- [ ] **Step 2: Run the symlink script**
-
-```bash
-CODIT_DATA_PATH=/mydata/adopt/christian/adopt/data_final \
-  bash scripts/create_symlinks.sh
-```
-
-Expected: lines like `Created: .../open_ocean/test/open_ocean_patch_1_year_2021/datasets -> ../datasets` for all 91 patches (58 train + 16 val + 17 test), then `Done.`
-
-- [ ] **Step 3: Verify one symlink resolves correctly**
-
-```bash
-ls /mydata/adopt/christian/adopt/data_final/datasets/open_ocean/test/open_ocean_patch_1_year_2021/datasets/open_ocean_patch_1_year_2021/
-```
-
-Expected: `copernicus  era5  hycom  trajectories`
-
-- [ ] **Step 4: Establish the CoDiT reference value**
+- [ ] **Step 1: Run CoDiT eval on 3 trajectories**
 
 ```bash
 CODIT_DATA_PATH=/mydata/adopt/christian/adopt/data_final \
@@ -94,19 +47,11 @@ models_dir = os.path.join(config_paths.MODEL_PATH, "trained_models")
 model = CoDiTModel.import_trained_model("codit_GRU_open_ocean", import_path=models_dir)
 
 distances, _, _ = run_eval(model, dataset, indices=[0, 50, 100], length=72, num_samples=100)
-ref = float(np.nanmean(distances))
-print(f"CODIT_REF_M = {ref:.1f}")
+print(f"CODIT_REF_M = {float(np.nanmean(distances)):.1f}")
 EOF
 ```
 
-Expected: a line like `CODIT_REF_M = 42000.0` (exact value will vary; record it for Task 2).
-
-- [ ] **Step 5: Commit the symlink script**
-
-```bash
-git add scripts/create_symlinks.sh
-git commit -m "chore: add symlink script for open_ocean data layout workaround"
-```
+Expected: a line like `CODIT_REF_M = 42000.0`. Record the printed value — it goes into Task 2.
 
 ---
 
@@ -124,11 +69,11 @@ git commit -m "chore: add symlink script for open_ocean data layout workaround"
   - `codit.model_module.linear_gauss_model.LinearGaussModel.import_trained_model(model_name: str, import_path: str) -> LinearGaussModel`
   - `codit.model_module.diffusion_model.CoDiTModel.import_trained_model(model_name: str, import_path: str) -> CoDiTModel`
   - `codit.eval_module.eval_runner.run_eval(model, dataset, indices, length, num_samples) -> (distances, pred_coords, true_coords)` where `distances.shape == (N, num_samples, length)`
-  - `CODIT_REF_M` float printed by Task 1 Step 4
+  - `CODIT_REF_M` float from Task 1
 
 - [ ] **Step 1: Write the test file**
 
-Replace `<CODIT_REF_M>` with the float value printed in Task 1 Step 4.
+Replace `<CODIT_REF_M>` with the float printed in Task 1.
 
 Create `tests/integration/test_reproducibility.py`:
 
@@ -139,8 +84,8 @@ error is within ±10% of a pre-established reference.
 
 Requires:
   - CODIT_DATA_PATH pointing at a data directory with open_ocean configs and datasets
+  - Datasets reorganised to canonical layout (see 2026-07-09-dataset-reorganisation plan)
   - Trained model checkpoints under $CODIT_DATA_PATH/trained_models/
-  - Symlinks created via scripts/create_symlinks.sh (open_ocean only)
 
 Skipped automatically when any of the above are absent.
 """
@@ -159,7 +104,7 @@ from codit.data_module import config_paths
 LGAUSS_REF_M: float = 34_651.0
 
 # CoDiT-GRU: established by running the shipped codit_GRU_open_ocean checkpoint
-# once on these 3 trajectories (see docs/superpowers/specs/2026-07-09-...).
+# once on these 3 trajectories (see Task 1 of this plan).
 # The shipped checkpoint differs from the paper checkpoint, so this verifies
 # self-consistency of the shipped model, not exact paper numbers.
 CODIT_REF_M: float = <CODIT_REF_M>
@@ -186,6 +131,7 @@ requires_codit = pytest.mark.skipif(
     not os.path.exists(_CODIT_CKPT),
     reason="codit_GRU_open_ocean checkpoint not found",
 )
+
 
 # ── Shared dataset fixture ────────────────────────────────────────────────────
 @pytest.fixture(scope="module")
@@ -240,29 +186,29 @@ def test_codit_gru_mean_error(open_ocean_dataset):
     )
 ```
 
-- [ ] **Step 2: Run only the new tests to verify they pass**
+- [ ] **Step 2: Run only the new tests**
 
 ```bash
 CODIT_DATA_PATH=/mydata/adopt/christian/adopt/data_final \
   micromamba run -n codit pytest tests/integration/test_reproducibility.py -v
 ```
 
-Expected output:
+Expected:
 ```
 tests/integration/test_reproducibility.py::test_linear_gauss_mean_error PASSED
 tests/integration/test_reproducibility.py::test_codit_gru_mean_error PASSED
 2 passed in ...s
 ```
 
-If either test fails with `AssertionError`, re-run Task 1 Step 4 to re-establish the reference and confirm `CODIT_REF_M` was copied correctly.
+If either test fails with `AssertionError`, re-run Task 1 to check `CODIT_REF_M` was copied correctly.
 
-- [ ] **Step 3: Run the full test suite to check for regressions**
+- [ ] **Step 3: Run the full test suite**
 
 ```bash
 micromamba run -n codit pytest tests/ -q
 ```
 
-Expected: all 107 existing tests plus the 2 new ones pass (109 total). The 2 new tests will be skipped if `CODIT_DATA_PATH` is not set — that is the correct behaviour for CI without data.
+Expected: 109 passed (107 existing + 2 new). Without `CODIT_DATA_PATH` set, the 2 new tests are skipped — correct behaviour for CI.
 
 - [ ] **Step 4: Commit**
 
