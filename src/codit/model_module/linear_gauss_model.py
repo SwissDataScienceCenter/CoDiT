@@ -140,22 +140,19 @@ def load_checkpoint(model: nnx.Module, ckpt_dir: str) -> nnx.Module:
 class LinearGaussModel(BaseTrajectoryModel):
 
     def __init__(self, name: str, params: dict, load_ckpt: bool = False):
-        """
-        Initializes the ConvNet model module.
+        """Initialise the Linear Gaussian model.
 
         Args:
-            name (str): The name of the model instance.
-            params (dict): A dictionary of parameters for the model.
+            name: Unique model identifier used for checkpoint directory naming.
+            params: Model parameters (currently unused; reserved for future extensions).
+            load_ckpt: If ``True``, attempt to restore parameters from an existing
+                checkpoint at ``{config_paths.MODEL_PATH}/ckpts/{name}/`` on construction.
 
         Attributes:
-            type (str): The type of the model, set to "conv_net".
-            params (dict): The parameters for the model.
-            model (ConvNet): The ConvNet model instance.
-            ckpt_dir (str): Directory path for model checkpoints.
-            trained_successfully (bool): Indicates whether the model was successfully restored from a checkpoint.
-
-        Raises:
-            Exception: If restoring the model state from checkpoint fails, sets `trained_successfully` to False.
+            type (str): Fixed to ``"linear_gauss"``.
+            model (LinearGaussModule): The Flax NNX module containing ``alpha`` and ``log_sigma``.
+            ckpt_dir (str): Path to the checkpoint directory.
+            trained_successfully (bool): ``True`` if parameters were loaded or fitted successfully.
         """
         super().__init__(name, params)
         self.type = "linear_gauss"
@@ -180,6 +177,28 @@ class LinearGaussModel(BaseTrajectoryModel):
         val_dataset: OceanTrainingDataset,
         train_params: dict | None = None,
     ) -> "LinearGaussModel":
+        """Fit ``alpha`` and ``log_sigma`` by minimising negative log-likelihood.
+
+        At each step the model predicts ``alpha * current_velocity`` and computes a
+        Gaussian log-likelihood with variance ``exp(log_sigma)^2``. Uses ``optax.adam``
+        and PyTorch's ``DataLoader`` for batching. Early stopping is applied if
+        ``patience`` is set.
+
+        Args:
+            train_dataset: Training split; context variables must be set before calling.
+            val_dataset: Validation split used for early-stopping evaluation.
+            train_params: Training hyperparameters. Supported keys:
+
+                - ``num_epochs`` (int): maximum epochs (default ``100``)
+                - ``num_batches_per_epoch`` (int): gradient steps per epoch (default ``100``)
+                - ``batch_size`` (int): samples per gradient step (default ``32``)
+                - ``lr`` (float): Adam learning rate (default ``1e-3``)
+                - ``min_delta`` (float): minimum improvement for early stopping (default ``0.001``)
+                - ``patience`` (int): epochs without val improvement before stopping (default ``5``)
+
+        Returns:
+            self, with ``model.alpha`` and ``model.log_sigma`` fitted.
+        """
         if train_params is None:
             train_params = {}
 
@@ -312,7 +331,24 @@ class LinearGaussModel(BaseTrajectoryModel):
         key: jax.Array = random.PRNGKey(0),
         num_samples: int = 1,
     ) -> jnp.ndarray:
+        """Sample trajectory predictions from the fitted Linear Gaussian model.
 
+        At each step, the predicted displacement is ``alpha * current_velocity + noise``
+        where ``noise ~ N(0, exp(log_sigma)^2 * I_2)``.
+
+        Args:
+            start_position: Lat/lon of the drifter at ``start_time``, shape ``(2,)`` in decimal degrees.
+            start_time: Absolute UTC datetime for the first prediction step.
+            prediction_length: Number of hourly time steps to predict.
+            interpolator: Pre-built ``interpax.Interpolator3D`` covering the domain.
+            test_dataset: ``OceanDataset`` providing context feature extraction.
+            key: JAX PRNG key (uses ``random.PRNGKey(0)`` if not provided).
+            num_samples: Number of independent trajectory samples to draw.
+
+        Returns:
+            Predicted trajectories as ``jnp.ndarray`` of shape ``(num_samples, prediction_length, 2)``
+            in decimal degrees (lat, lon).
+        """
         times = self._get_prediction_steps(start_time, prediction_length)
         num_preds = num_samples
         cur_coord = jnp.array([start_position])
@@ -368,15 +404,19 @@ class LinearGaussModel(BaseTrajectoryModel):
     def export_trained_model(
         self, model_name: str | None = None, export_path: str | None = None
     ) -> None:
-        """
-        Exports the trained model to a specified path.
+        """Save the fitted model parameters to disk as a pickle file.
+
+        Writes ``model_config.yml`` (YAML of ``self.params``) and
+        ``nnx_model.pkl`` (pickle of the Flax NNX state) into
+        ``{export_path}/{model_name}/``.
 
         Args:
-            model_name (str): The name of the model to export. If None, uses the model's name.
-            export_path (str): The directory where the model will be exported. If None, uses a default path.
+            model_name: Checkpoint folder name. Defaults to ``self.name``.
+            export_path: Parent directory. Defaults to
+                ``{config_paths.MODEL_PATH}/trained_models``.
 
         Raises:
-            ValueError: If the model parameters are not set.
+            Exception: If a directory named ``model_name`` already exists at ``export_path``.
         """
 
         if model_name is None:
@@ -406,15 +446,22 @@ class LinearGaussModel(BaseTrajectoryModel):
     def import_trained_model(
         cls, model_name: str, import_path: str | None = None
     ) -> "LinearGaussModel":
-        """
-        Imports a trained LinearGaussModel from the specified path.
+        """Restore a fitted LinearGaussModel from a pickle checkpoint.
+
+        Reads ``model_config.yml`` and ``nnx_model.pkl`` from
+        ``{import_path}/{model_name}/`` and merges the restored NNX state back
+        into a freshly constructed model.
 
         Args:
-            model_name (str): The name of the model to import.
-            import_path (str | None): The path from which to import the model. If None, uses a default path.
+            model_name: Name of the checkpoint directory.
+            import_path: Parent directory to search. Defaults to
+                ``{config_paths.MODEL_PATH}/trained_models``.
 
         Returns:
-            LinearGaussModel: An instance of the LinearGaussModel class with the loaded parameters.
+            A ``LinearGaussModel`` with ``alpha`` and ``log_sigma`` restored from the checkpoint.
+
+        Raises:
+            FileNotFoundError: If ``nnx_model.pkl`` does not exist in the checkpoint directory.
         """
         if import_path is None:
             import_path = os.path.join(config_paths.MODEL_PATH, "trained_models")
