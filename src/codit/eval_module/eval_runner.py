@@ -9,12 +9,15 @@ the two scripts stay in sync.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from jax import numpy as jnp
 from jax import vmap
 
 from codit.data_module import data_transform
+
+logger = logging.getLogger(__name__)
 
 
 def run_eval(
@@ -86,7 +89,8 @@ def run_eval(
             distances_list.append(distance[None])
             pred_coords_list.append(pred_coord[None])
             true_coords_list.append(coordinates[:, :][None])
-        except ValueError:
+        except ValueError as e:
+            logger.warning("Skipping index %d: %s", idx, e)
             continue
 
     if not distances_list:

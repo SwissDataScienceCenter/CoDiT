@@ -120,8 +120,10 @@ class DirectPredictionModel(BaseTrajectoryModel):
         self,
         train_dataset: OceanTrainingDataset,
         val_dataset: OceanTrainingDataset,
-        train_params: dict = {},
+        train_params: dict | None = None,
     ) -> "DirectPredictionModel":
+        if train_params is None:
+            train_params = {}
         default_train_params = {
             "seed": 0,
             "batch_size": 128,

@@ -24,8 +24,8 @@ class BaseTrajectoryModel(ABC):
     Attributes:
         name (str): Name of the model.
         type (str): Type of the model (default: "base_model").
-        params (dict): Model parameters. 
-            All models can have the field 'vars', that is a list of strings. Possible fields are 'hycom_current', 
+        params (dict): Model parameters.
+            All models can have the field 'vars', that is a list of strings. Possible fields are 'hycom_current',
             'copernicus_current', 'era5_wind', and 'bathymetry', which selects the corresponding input variables.
             If nothing is indicated, all variables are taken.
         training_sets (list): Names of the training sets used.
@@ -74,22 +74,21 @@ class BaseTrajectoryModel(ABC):
         self.params = params
         self.training_set = None
         self.trained_successfully = False
-        
-        self.vars = self.params.get('vars', None)
+
+        self.vars = self.params.get("vars", None)
         if self.vars is None:
             self.var_idx = jnp.arange(0, 8, dtype=int)
         else:
             var_idx = []
-            if 'hycom_current' in self.vars:
+            if "hycom_current" in self.vars:
                 var_idx += [0, 1]
-            if 'copernicus_current' in self.vars:
+            if "copernicus_current" in self.vars:
                 var_idx += [2, 3]
-            if 'era5_wind' in self.vars:
+            if "era5_wind" in self.vars:
                 var_idx += [4, 5]
-            if 'bathymetry' in self.vars:
+            if "bathymetry" in self.vars:
                 var_idx += [6, 7]
             self.var_idx = jnp.sort(jnp.asarray(var_idx, dtype=int))
-            
 
     def set_model_name(self, name: str) -> "BaseTrajectoryModel":
         """
@@ -108,7 +107,7 @@ class BaseTrajectoryModel(ABC):
         self,
         train_dataloader: OceanTrainingDataset,
         val_dataloader: OceanTrainingDataset,
-        train_params: dict = {},
+        train_params: dict | None = None,
     ) -> "BaseTrajectoryModel":
         """
         Fits the model using the provided training configurations.
@@ -124,6 +123,8 @@ class BaseTrajectoryModel(ABC):
             - Calls the internal `_fit` method with the training configurations.
             - Sets the `trained_successfully` attribute to True.
         """
+        if train_params is None:
+            train_params = {}
         # self.training_sets = [config["name"] for config in train_configs]
         self._fit(train_dataloader, val_dataloader, train_params)
         self.trained_successfully = True
@@ -134,7 +135,7 @@ class BaseTrajectoryModel(ABC):
         self,
         train_dataloader: OceanTrainingDataset,
         val_dataloader: OceanTrainingDataset,
-        train_params: dict = {},
+        train_params: dict | None = None,
     ) -> "BaseTrajectoryModel":
         """
         Fits the model using the provided training configurations.
@@ -200,7 +201,9 @@ class BaseTrajectoryModel(ABC):
             raise Exception("Model has not been trained yet")
 
     @classmethod
-    def load(cls, model_name: str, model_path: str) -> tuple["BaseTrajectoryModel", dict]:
+    def load(
+        cls, model_name: str, model_path: str
+    ) -> tuple["BaseTrajectoryModel", dict]:
         """
         Loads a model and its configuration from the specified path.
 
@@ -225,17 +228,19 @@ class BaseTrajectoryModel(ABC):
         return model, model_config
 
     @staticmethod
-    def _get_prediction_steps(start_time: datetime.datetime, prediction_length: int) -> jnp.ndarray:
+    def _get_prediction_steps(
+        start_time: datetime.datetime, prediction_length: int
+    ) -> jnp.ndarray:
         # Generate an array of prediction steps based on the start time and prediction length
         times = np.arange(
             start_time,
-            start_time + datetime.timedelta(hours=prediction_length+1),
+            start_time + datetime.timedelta(hours=prediction_length + 1),
             datetime.timedelta(hours=1),
             dtype=np.datetime64,
         )
         times = jnp.array(utils.convert_date_to_hours(times), dtype=jnp.float32)
         return times
-    
+
     @abstractmethod
     def predict(
         self,
@@ -260,9 +265,11 @@ class BaseTrajectoryModel(ABC):
             NotImplementedError: This method must be implemented by subclasses.
         """
         pass
-    
+
     @abstractmethod
-    def export_trained_model(self, model_name: str | None = None, export_path: str | None = None) -> None:
+    def export_trained_model(
+        self, model_name: str | None = None, export_path: str | None = None
+    ) -> None:
         """
         Exports the trained model to a specified path.
 
@@ -274,10 +281,12 @@ class BaseTrajectoryModel(ABC):
             ValueError: If the model parameters are not set.
         """
         pass
-    
+
     @classmethod
     @abstractmethod
-    def import_trained_model(cls, model_name: str, import_path: str | None) -> "BaseTrajectoryModel":
+    def import_trained_model(
+        cls, model_name: str, import_path: str | None
+    ) -> "BaseTrajectoryModel":
         """
         Imports a trained model from the specified path.
 
