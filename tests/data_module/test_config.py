@@ -75,9 +75,7 @@ class TestLoadConfig:
             result = config_funcs.load_config("test_patch", str(config_dir))
 
         expected = os.path.join(
-            str(tmp_path),
-            "datasets", "coastline", "val",
-            "test_patch", "datasets", "test_patch",
+            str(tmp_path), "datasets", "coastline", "val", "test_patch"
         )
         assert result["dataset_path"] == expected
 

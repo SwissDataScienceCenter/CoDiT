@@ -84,11 +84,10 @@ def load_config(data_name: str, config_path: str) -> dict:
     # YAML configs store stale absolute paths from the original environment.
     # Config directory structure mirrors dataset structure:
     #   config lives at:  CONFIG_PATH/{dataset}/{split}/{name}.yml
-    #   data lives at:    DATA_PATH/datasets/{dataset}/{split}/{name}/datasets/{name}
+    #   data lives at:    DATA_PATH/datasets/{dataset}/{split}/{name}/
     rel = os.path.relpath(config_path, config_paths.CONFIG_PATH)
     config["dataset_path"] = os.path.join(
-        config_paths.DATA_PATH, "datasets", rel,
-        config["name"], "datasets", config["name"],
+        config_paths.DATA_PATH, "datasets", rel, config["name"]
     )
 
     config = complete_config(config)
