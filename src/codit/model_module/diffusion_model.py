@@ -152,7 +152,7 @@ def denoise(
     # step_func = lambda carry, i: backward_denoising_step(
     #     carry, i, W, batch, schedule_dict, noise_model, model, params
     # )
-    denoise_results = lax.scan(step_func, init, iterations) # type: ignore
+    denoise_results = lax.scan(step_func, init, iterations)  # type: ignore
     y = denoise_results[0][1]
     denoising_steps = denoise_results[1]
     return y, denoising_steps
@@ -192,7 +192,7 @@ def restore_checkpoint(ckpt_file: str) -> tuple[nn.Module, list, list, jnp.ndarr
 class CoDiTModel(BaseTrajectoryModel):
 
     def __init__(self, name: str, params: dict) -> None:
-        
+
         self.type = "diffusion"
 
         default_params = {
@@ -282,14 +282,6 @@ class CoDiTModel(BaseTrajectoryModel):
             start = trajectory[:, 0]
         return (trajectory - start) / self.std + start
 
-    def fit(
-        self,
-        train_dataloader: OceanTrainingDataset,
-        val_dataloader: OceanTrainingDataset,
-        train_params: dict = {},
-    ) -> "CoDiTModel":
-        return self._fit(train_dataloader, val_dataloader, train_params)
-
     def _fit(
         self,
         train_dataset: OceanTrainingDataset,
@@ -323,7 +315,9 @@ class CoDiTModel(BaseTrajectoryModel):
         #     "Trajectories should be a jnp.ndarray, "
         #     "but got: {}".format(type(train_dataset.trajectories))
         # )
-        traj_in_metres = vmap(transform_traj_to_metre)(jnp.asarray(train_dataset.trajectories))
+        traj_in_metres = vmap(transform_traj_to_metre)(
+            jnp.asarray(train_dataset.trajectories)
+        )
         self.std = jnp.std(traj_in_metres[:, -1], axis=0)
         train_dataset.set_context_var_idx(self.var_idx)
         train_dataloader = data.DataLoader(
@@ -423,7 +417,9 @@ class CoDiTModel(BaseTrajectoryModel):
                 writer=writer,
                 std=self.std,
                 early_stopping_patience=train_params.get("early_stopping_patience", 10),
-                early_stopping_min_delta=train_params.get("early_stopping_min_delta", 1e-4),
+                early_stopping_min_delta=train_params.get(
+                    "early_stopping_min_delta", 1e-4
+                ),
             )
             writer.close()
             print("storing", self.ckpt_dir)
@@ -453,7 +449,6 @@ class CoDiTModel(BaseTrajectoryModel):
         self.nn_params = trained_model["params"]
         self.std = trained_model["std"]
 
-
     def predict(
         self,
         start_position: jax.Array,
@@ -470,7 +465,7 @@ class CoDiTModel(BaseTrajectoryModel):
         prediction_length = len(times) - 1
         start_context = test_dataset.get_context(
             times[:1], start_position[None], interpolator
-        )[...,self.var_idx]
+        )[..., self.var_idx]
         coords_denoised = [start_position]
 
         key, subkey = random.split(key)
@@ -483,7 +478,9 @@ class CoDiTModel(BaseTrajectoryModel):
         keys = random.split(key, num_samples + 1)
         key, subkeys = keys[0], keys[1:]
 
-        def get_noise_model(key: jax.Array, prediction_length: int) -> tuple[jnp.ndarray, jnp.ndarray]:
+        def get_noise_model(
+            key: jax.Array, prediction_length: int
+        ) -> tuple[jnp.ndarray, jnp.ndarray]:
             keys = random.split(key, K + 1)
             key, subkeys = keys[0], keys[1:]
             return vmap(self.noise_model, in_axes=(0, None))(subkeys, prediction_length)
@@ -504,7 +501,10 @@ class CoDiTModel(BaseTrajectoryModel):
             batch: dict,
             numeric_time: jnp.ndarray,
             i: int,
-        ) -> tuple[jnp.ndarray, jnp.ndarray] | tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+        ) -> (
+            tuple[jnp.ndarray, jnp.ndarray]
+            | tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]
+        ):
             denoised, denoised_steps = denoise(
                 self.nn_params,  # type: ignore
                 initial_y,
@@ -568,9 +568,17 @@ class CoDiTModel(BaseTrajectoryModel):
             distance_in_metres = jnp.sqrt(
                 denoised_steps_scaled[..., 0] ** 2 + denoised_steps_scaled[..., 1] ** 2
             )
-            bearing_angle = jnp.arctan2(denoised_steps_scaled[..., 1], denoised_steps_scaled[..., 0])
+            bearing_angle = jnp.arctan2(
+                denoised_steps_scaled[..., 1], denoised_steps_scaled[..., 0]
+            )
             bearing_angle = jnp.degrees(bearing_angle)
-            denoised_coords = vmap(vmap(vmap(data_transform.inverse_haversine, in_axes=(None, 0, 0)), in_axes=(None, 0, 0)), in_axes=(None, 0, 0))(start_position, distance_in_metres, bearing_angle)
+            denoised_coords = vmap(
+                vmap(
+                    vmap(data_transform.inverse_haversine, in_axes=(None, 0, 0)),
+                    in_axes=(None, 0, 0),
+                ),
+                in_axes=(None, 0, 0),
+            )(start_position, distance_in_metres, bearing_angle)
             return pred_coords[:, 1:], denoised_coords
         else:
             return pred_coords[:, 1:]
@@ -677,33 +685,41 @@ class CoDiTModel(BaseTrajectoryModel):
     #         )
     #     pred_coords = jnp.concatenate(coords_denoised, axis=1)
     #     return pred_coords[:, 1:]
-    
-    def export_trained_model(self, model_name: str | None = None, export_path: str | None = None) -> None:
+
+    def export_trained_model(
+        self, model_name: str | None = None, export_path: str | None = None
+    ) -> None:
         if model_name is None:
             model_name = self.name
         if export_path is None:
             export_path = os.path.join(config_paths.MODEL_PATH, "trained_models")
-            
+
         model_path = os.path.join(export_path, model_name)
         if not os.path.exists(model_path):
             os.makedirs(model_path)
         else:
-            raise Exception(f"Model {model_name} already exists in {model_path}. Please delete it or change the model name.")
-        
+            raise Exception(
+                f"Model {model_name} already exists in {model_path}. Please delete it or change the model name."
+            )
+
         with open(os.path.join(model_path, "model_config.yml"), "w") as f:
             yaml.dump(self.params, f, default_flow_style=False)
-            
+
         # save nn_params and std
         nn_params_path = os.path.join(model_path, "nn_params.npz")
-        
+
         if self.nn_params is None:
-            raise ValueError("Model parameters (nn_params) are None. Train or load the model before exporting.")
-        #jnp.savez(nn_params_path, params=self.nn_params, std=self.std, allow_pickle=True)
+            raise ValueError(
+                "Model parameters (nn_params) are None. Train or load the model before exporting."
+            )
+        # jnp.savez(nn_params_path, params=self.nn_params, std=self.std, allow_pickle=True)
         with open(nn_params_path, "wb") as f:
             pickle.dump({"params": self.nn_params, "std": self.std}, f)
-    
+
     @classmethod
-    def import_trained_model(cls, model_name: str, import_path: str|None = None) -> "CoDiTModel":
+    def import_trained_model(
+        cls, model_name: str, import_path: str | None = None
+    ) -> "CoDiTModel":
         """
         Imports a trained model from the specified path.
 
@@ -720,22 +736,23 @@ class CoDiTModel(BaseTrajectoryModel):
         config_file = os.path.join(model_path, "model_config.yml")
         if not os.path.exists(config_file):
             raise FileNotFoundError(f"Configuration file {config_file} does not exist.")
-        
+
         with open(config_file, "r") as f:
             model_config = yaml.safe_load(f)
-        
+
         nn_params_path = os.path.join(model_path, "nn_params.npz")
         if not os.path.exists(nn_params_path):
-            raise FileNotFoundError(f"NN parameters file {nn_params_path} does not exist.")
-        
-        #nn_params = jnp.load(nn_params_path, allow_pickle=True)
+            raise FileNotFoundError(
+                f"NN parameters file {nn_params_path} does not exist."
+            )
+
+        # nn_params = jnp.load(nn_params_path, allow_pickle=True)
         with open(nn_params_path, "rb") as f:
             nn_params = pickle.load(f)
-            
+
         model = cls(model_name, model_config)
         assert isinstance(nn_params, dict), "Loaded nn_params should be a dictionary."
         model.nn_params = nn_params["params"]
         model.std = nn_params["std"]
-        
+
         return model
-        
