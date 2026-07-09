@@ -19,7 +19,10 @@ import urllib.request
 # TODO: Replace placeholder URLs with actual Zenodo URLs once data is uploaded.
 # Each tarball, when extracted, must produce the directory structure expected by
 # config_funcs.load_config:
-#   datasets/{dataset}/{split}/{patch_name}/datasets/{patch_name}/
+#   datasets/{dataset}/{split}/{patch_name}/copernicus/
+#   datasets/{dataset}/{split}/{patch_name}/era5/
+#   datasets/{dataset}/{split}/{patch_name}/hycom/
+#   datasets/{dataset}/{split}/{patch_name}/trajectories/
 #   configs/{dataset}/{split}/{patch_name}.yml
 # --------------------------------------------------------------------------
 DATASET_URLS: dict[str, dict[str, str]] = {
