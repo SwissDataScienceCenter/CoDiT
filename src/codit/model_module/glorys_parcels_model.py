@@ -2,6 +2,7 @@ import datetime
 
 from jax import numpy as jnp
 import numpy as np
+
 try:
     import parcels
     import zarr
@@ -14,6 +15,7 @@ from codit.data_module import data_transform
 from codit.data_module.dataset import OceanDataset
 from codit.model_module.base_model import BaseTrajectoryModel
 
+
 class GlorysParcelsModel(BaseTrajectoryModel):
     def __init__(self, name: str, params: dict) -> None:
         # params optional keys:
@@ -24,18 +26,35 @@ class GlorysParcelsModel(BaseTrajectoryModel):
         self.kernel_name = params.get("kernel", "RK4")
         self.sub_dt_minutes = params.get("sub_dt", 60)
 
-    def _fit(self, train_dataloader, val_dataloader, train_params={}) -> "GlorysParcelsModel":
+    def _fit(
+        self, train_dataloader, val_dataloader, train_params=None
+    ) -> "GlorysParcelsModel":
+        if train_params is None:
+            train_params = {}
         return self  # no-op, physics-only model
 
-    def predict(self, start_position, start_time, prediction_length,
-                interpolator, test_dataset, **kwargs) -> jnp.ndarray:
-        ds_uv    = self._extract_uv_dataset(test_dataset, start_time, prediction_length + 1)
+    def predict(
+        self,
+        start_position,
+        start_time,
+        prediction_length,
+        interpolator,
+        test_dataset,
+        **kwargs,
+    ) -> jnp.ndarray:
+        ds_uv = self._extract_uv_dataset(
+            test_dataset, start_time, prediction_length + 1
+        )
         fieldset = self._build_fieldset(ds_uv)
-        lats, lons = self._run_parcels(fieldset, start_position, start_time, prediction_length + 1)
-        coords = np.stack([lats, lons], axis=-1)           # (prediction_length, 2)
-        return jnp.array(coords[None], dtype=jnp.float32) # (1, prediction_length, 2)
-    
-    def export_trained_model(self, model_name: str | None = None, export_path: str | None = None) -> None:
+        lats, lons = self._run_parcels(
+            fieldset, start_position, start_time, prediction_length + 1
+        )
+        coords = np.stack([lats, lons], axis=-1)  # (prediction_length, 2)
+        return jnp.array(coords[None], dtype=jnp.float32)  # (1, prediction_length, 2)
+
+    def export_trained_model(
+        self, model_name: str | None = None, export_path: str | None = None
+    ) -> None:
         """
         Exports the trained model to a specified path.
 
@@ -47,9 +66,11 @@ class GlorysParcelsModel(BaseTrajectoryModel):
             ValueError: If the model parameters are not set.
         """
         pass
-    
+
     @classmethod
-    def import_trained_model(cls, model_name: str, import_path: str | None) -> "GlorysParcelsModel":
+    def import_trained_model(
+        cls, model_name: str, import_path: str | None
+    ) -> "GlorysParcelsModel":
         """
         Imports a trained model from the specified path.
 
@@ -66,34 +87,39 @@ class GlorysParcelsModel(BaseTrajectoryModel):
             pickle.UnpicklingError: If there is an error unpickling the model file.
         """
         return GlorysParcelsModel(model_name, {})
-    
-    
+
     def _extract_uv_dataset(self, test_dataset, start_time, prediction_length):
-        t_start = start_time - datetime.timedelta(hours=1)   # 1-hour buffer for interpolation
-        t_end   = start_time + datetime.timedelta(hours=prediction_length + 1)
+        t_start = start_time - datetime.timedelta(
+            hours=1
+        )  # 1-hour buffer for interpolation
+        t_end = start_time + datetime.timedelta(hours=prediction_length + 1)
         ds = test_dataset.context_xarray.sel(time=slice(t_start, t_end))
         ds_uv = ds[["uo", "vo"]].fillna(0.0)  # NaN->0 (land cells = no advection)
         return ds_uv
-    
+
     def _build_fieldset(self, ds):
         fieldset = parcels.FieldSet.from_xarray_dataset(
             ds,
             variables={"U": "uo", "V": "vo"},
             dimensions={"lat": "latitude", "lon": "longitude", "time": "time"},
-            mesh="spherical",                  # lat/lon degrees, polar correction applied
-            allow_time_extrapolation=True,    # explicit error if particle leaves time window
+            mesh="spherical",  # lat/lon degrees, polar correction applied
+            allow_time_extrapolation=True,  # explicit error if particle leaves time window
         )
         return fieldset
-    
+
     def _run_parcels(self, fieldset, start_position, start_time, prediction_length):
-        
 
-        kernel = getattr(parcels, {"RK4":"AdvectionRK4",
-                                   "RK45":"AdvectionRK45",
-                                   "Euler":"AdvectionEE"}[self.kernel_name])
+        kernel = getattr(
+            parcels,
+            {"RK4": "AdvectionRK4", "RK45": "AdvectionRK45", "Euler": "AdvectionEE"}[
+                self.kernel_name
+            ],
+        )
 
-        particle_time = float(fieldset.time_origin.reltime(np.datetime64(start_time, 'ns')))  
-        
+        particle_time = float(
+            fieldset.time_origin.reltime(np.datetime64(start_time, "ns"))
+        )
+
         pset = parcels.ParticleSet(
             fieldset=fieldset,
             pclass=parcels.JITParticle,
@@ -103,22 +129,24 @@ class GlorysParcelsModel(BaseTrajectoryModel):
         )
 
         try:
-            store = zarr.storage.MemoryStore()   # zarr v3
+            store = zarr.storage.MemoryStore()  # zarr v3
         except AttributeError:
-            store = zarr.MemoryStore()           # zarr v2 fallback
+            store = zarr.MemoryStore()  # zarr v2 fallback
 
-        output_file = pset.ParticleFile(name=store, outputdt=datetime.timedelta(hours=1))
+        output_file = pset.ParticleFile(
+            name=store, outputdt=datetime.timedelta(hours=1)
+        )
 
         pset.execute(
             pyfunc=kernel,
             runtime=datetime.timedelta(hours=prediction_length),
-            dt=self.sub_dt_minutes * 60,        # default 1200s (20 min) = 3 RK4 steps/hour
+            dt=self.sub_dt_minutes * 60,  # default 1200s (20 min) = 3 RK4 steps/hour
             output_file=output_file,
             verbose_progress=False,
         )
 
         ds_out = xr.open_zarr(store)
         # obs axis: index 0 = initial position (t=start_time); 1..prediction_length = hourly outputs
-        lats = np.array(ds_out["lat"].values[0, 1:])   # (prediction_length,)
+        lats = np.array(ds_out["lat"].values[0, 1:])  # (prediction_length,)
         lons = np.array(ds_out["lon"].values[0, 1:])
         return lats, lons

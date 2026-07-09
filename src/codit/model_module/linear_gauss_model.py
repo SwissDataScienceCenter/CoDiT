@@ -178,8 +178,10 @@ class LinearGaussModel(BaseTrajectoryModel):
         self,
         train_dataset: OceanTrainingDataset,
         val_dataset: OceanTrainingDataset,
-        train_params: dict = {},
+        train_params: dict | None = None,
     ) -> "LinearGaussModel":
+        if train_params is None:
+            train_params = {}
 
         ckpt_dir = ocp.test_utils.erase_and_create_empty(self.ckpt_dir)
         train_dataset.set_context_var_idx(self.var_idx)

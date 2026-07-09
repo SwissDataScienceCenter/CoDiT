@@ -286,8 +286,10 @@ class CoDiTModel(BaseTrajectoryModel):
         self,
         train_dataset: OceanTrainingDataset,
         val_dataset: OceanTrainingDataset,
-        train_params: dict = {},
+        train_params: dict | None = None,
     ) -> "CoDiTModel":
+        if train_params is None:
+            train_params = {}
         # return self
         default_train_params = {
             "seed": 0,
