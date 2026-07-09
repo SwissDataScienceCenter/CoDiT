@@ -119,7 +119,7 @@ Orbax checkpoint  →  data/trained_models/ckpts/<model_name>/
 
 1. Implement a Flax `nn.Module` in `src/codit/codit_module/diffusion_models.py` with the
    same call signature as `Autoregressive_Denoiser`:
-   `__call__(self, y, y_history, batch, k)` → `jnp.ndarray` of shape `(T-1, 2)`.
+   `__call__(self, y, y_history, x, k, train=True)` → `jnp.ndarray` of shape `(T-1, 2)`.
 2. Register it in `CoDiTModel.__init__` under a new `model_type` string.
 3. Pass `--model_type your_type` to `my_scripts/model_fitting/codit_train.py`.
 
