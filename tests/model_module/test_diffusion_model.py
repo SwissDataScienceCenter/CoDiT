@@ -1,6 +1,5 @@
 """Tests for CoDiTModel correctness."""
 
-import jax
 import jax.numpy as jnp
 import flax.nnx as nnx
 

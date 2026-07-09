@@ -18,7 +18,6 @@ from tqdm import tqdm
 
 from codit.codit_module import noising_functions
 from codit.codit_module.brownian_noise_models import WalkNoiseModel
-from codit.data_module import data_transform
 from codit.data_module.data_transform import transform_traj_to_metre
 
 ##### Model stuff #####

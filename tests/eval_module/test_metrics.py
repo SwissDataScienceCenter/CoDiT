@@ -21,7 +21,6 @@ API contract
 
 import jax.numpy as jnp
 import numpy as np
-import pytest
 
 from codit.eval_module.metrics import (
     get_energy_score,
@@ -310,7 +309,7 @@ class TestGetSkillScore4D:
 
     def test_perfect_prediction_gives_high_skill(self):
         """When the median of samples equals true, skill score should be 1."""
-        n, s, t = 3, 1, 8
+        n, t = 3, 8
         true = _moving_coords_with_start(n=n, t=t)  # (N, T+1, 2)
         # Single sample equals the true future trajectory
         pred = true[:, None, 1:, :]  # (N, 1, T, 2) — skip start pos

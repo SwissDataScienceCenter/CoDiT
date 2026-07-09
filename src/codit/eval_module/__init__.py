@@ -2,4 +2,4 @@
 Evaluation module for CoDiT
 """
 
-from .metrics import *
+from .metrics import *  # noqa: F403
