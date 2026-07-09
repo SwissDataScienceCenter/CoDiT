@@ -2,7 +2,7 @@ import datetime
 import os
 import pickle
 
-#from anyio import key
+# from anyio import key
 import jax
 import optax
 import orbax.checkpoint as ocp
@@ -28,6 +28,7 @@ def merge_state(dst: nnx.State, src: nnx.State) -> None:
         else:
             dst[k] = v
 
+
 class LinearGaussModule(nnx.Module):
     def __init__(self, rngs: nnx.Rngs):
         """
@@ -52,30 +53,38 @@ class LinearGaussModule(nnx.Module):
         # self.Dropout = nnx.Dropout(rate=0.2, rngs=rngs)
         # self.Linear2 = nnx.Linear(in_features=64, out_features=2, rngs=rngs)
 
-    
     def get_mean_velocity(self, context: jax.Array) -> jnp.ndarray:
         # get the center of the context features for axis=-2 and -3
         grid_size = context.shape[-2]
         half_gridsize = grid_size // 2
         if grid_size % 2 == 0:
-            center_context = context[..., half_gridsize-1:half_gridsize+1, half_gridsize-1:half_gridsize+1,:].mean(axis=(-2, -3))
+            center_context = context[
+                ...,
+                half_gridsize - 1 : half_gridsize + 1,
+                half_gridsize - 1 : half_gridsize + 1,
+                :,
+            ].mean(axis=(-2, -3))
         else:
             center_context = context[..., half_gridsize, half_gridsize, :]
-        
+
         water_velocity = center_context[..., [3, 2]]
         wind_velocity = center_context[..., [5, 4]]
         mean_velocity = water_velocity + self.alpha * wind_velocity
         return mean_velocity
-    
+
     def __call__(self, context: jax.Array, key: jax.Array) -> jnp.ndarray:
         mean_velocity = self.get_mean_velocity(context)
         sigma = jnp.exp(self.log_sigma)
         rand_vec = random.normal(key=key, shape=mean_velocity.shape)
         sampled_velocity = mean_velocity + sigma * rand_vec
         return sampled_velocity
-    
 
-def gauss_loss(true_increments: jnp.ndarray, pred_mean_velocity: jnp.ndarray, log_sigma: jnp.ndarray) -> jnp.ndarray:
+
+def gauss_loss(
+    true_increments: jnp.ndarray,
+    pred_mean_velocity: jnp.ndarray,
+    log_sigma: jnp.ndarray,
+) -> jnp.ndarray:
     """
     Computes the mean squared error loss between the predicted and true increments of a trajectory.
 
@@ -91,9 +100,12 @@ def gauss_loss(true_increments: jnp.ndarray, pred_mean_velocity: jnp.ndarray, lo
     #     trajectory[:-1], trajectory[1:], 3600
     # )
     # mean_velocity = model.get_mean_velocity(context)
-    gauss_loss = true_increments.shape[-1] * log_sigma + 0.5 * jnp.sum(jnp.pow((true_increments - pred_mean_velocity) * jnp.exp(-log_sigma), 2), axis=-1)
+    gauss_loss = true_increments.shape[-1] * log_sigma + 0.5 * jnp.sum(
+        jnp.pow((true_increments - pred_mean_velocity) * jnp.exp(-log_sigma), 2),
+        axis=-1,
+    )
     return jnp.mean(gauss_loss)
-    #return jnp.mean(jnp.pow(mean_velocity - true_increments, 2))
+    # return jnp.mean(jnp.pow(mean_velocity - true_increments, 2))
 
 
 def load_checkpoint(model: nnx.Module, ckpt_dir: str) -> nnx.Module:
@@ -112,13 +124,13 @@ def load_checkpoint(model: nnx.Module, ckpt_dir: str) -> nnx.Module:
         item_names=("state", "opt_state"),
     ) as ckpt_mgr:
         graphdef, abstract_state = nnx.split(model)
-        rngs_key = jax.tree.map(jax.random.key_data, abstract_state.filter(nnx.RngKey)) # type: ignore
-        merge_state(abstract_state, rngs_key) # type: ignore
+        rngs_key = jax.tree.map(jax.random.key_data, abstract_state.filter(nnx.RngKey))  # type: ignore
+        merge_state(abstract_state, rngs_key)  # type: ignore
 
         restored = ckpt_mgr.restore(
             1,
             args=ocp.args.Composite(
-                state=ocp.args.StandardRestore(abstract_state), # type: ignore
+                state=ocp.args.StandardRestore(abstract_state),  # type: ignore
             ),
         )
     state_restored = jax.device_put(restored["state"], jax.devices()[0])
@@ -180,18 +192,21 @@ class LinearGaussModel(BaseTrajectoryModel):
         )
         optimizer = nnx.Optimizer(self.model, optax.adam(train_params.get("lr", 1e-3)))
 
-        state_axes = nnx.StateAxes({'Dropout': 0, ...: None})
+        state_axes = nnx.StateAxes({"Dropout": 0, ...: None})
 
-        @nnx.split_rngs(splits=train_params.get("batch_size", 32), only='dropout')
+        @nnx.split_rngs(splits=train_params.get("batch_size", 32), only="dropout")
         @nnx.vmap(
-            in_axes=(state_axes, 0), # model is not vmapped, x is vmapped, train is not vmapped
-            out_axes=0 # Output is vmapped
+            in_axes=(
+                state_axes,
+                0,
+            ),  # model is not vmapped, x is vmapped, train is not vmapped
+            out_axes=0,  # Output is vmapped
         )
         def batched_apply(model, x: jnp.ndarray):
             """Applies the model to a batch of inputs."""
             # NNX will handle the state and RNGs of the model instance passed to this function.
             return model.get_mean_velocity(x)
-        
+
         @nnx.jit
         def train_step(
             model: nnx.Module,
@@ -203,14 +218,19 @@ class LinearGaussModel(BaseTrajectoryModel):
                 model: nnx.Module, trajectory: jnp.ndarray, context: jnp.ndarray
             ) -> jnp.ndarray:
                 true_increments = vmap(
-                    vmap(data_transform.velocity_vector_from_pos_time, in_axes=(0, 0, None)),
+                    vmap(
+                        data_transform.velocity_vector_from_pos_time,
+                        in_axes=(0, 0, None),
+                    ),
                     in_axes=(0, 0, None),
                 )(trajectory[:, :-1], trajectory[:, 1:], 3600)
-                increment_prediction = batched_apply(model, context[:, :-1]) # type: ignore
-                return gauss_loss(true_increments, increment_prediction, model.log_sigma)
+                increment_prediction = batched_apply(model, context[:, :-1])  # type: ignore
+                return gauss_loss(
+                    true_increments, increment_prediction, model.log_sigma
+                )
 
             loss, grad = nnx.value_and_grad(loss_fn)(model, trajectory, context)
-            optimizer = optimizer.update(grad) # type: ignore
+            optimizer = optimizer.update(grad)  # type: ignore
             return loss
 
         @nnx.jit
@@ -219,11 +239,16 @@ class LinearGaussModel(BaseTrajectoryModel):
         ) -> jnp.ndarray:
             def loss_fn(model: nnx.Module) -> jnp.ndarray:
                 true_increments = vmap(
-                    vmap(data_transform.velocity_vector_from_pos_time, in_axes=(0, 0, None)),
+                    vmap(
+                        data_transform.velocity_vector_from_pos_time,
+                        in_axes=(0, 0, None),
+                    ),
                     in_axes=(0, 0, None),
                 )(trajectory[:, :-1], trajectory[:, 1:], 3600)
-                increment_prediction = batched_apply(model, context[:, :-1]) # type: ignore
-                return gauss_loss(true_increments, increment_prediction, model.log_sigma)
+                increment_prediction = batched_apply(model, context[:, :-1])  # type: ignore
+                return gauss_loss(
+                    true_increments, increment_prediction, model.log_sigma
+                )
 
             loss = loss_fn(model)
             return loss
@@ -247,22 +272,24 @@ class LinearGaussModel(BaseTrajectoryModel):
                 item_names=("state", "opt_state"),
             ) as ckpt_mgr:
                 _, state = nnx.split(self.model)
-                rngs_key = jax.tree.map(jax.random.key_data, state.filter(nnx.RngKey)) # type: ignore
-                merge_state(state, rngs_key) # type: ignore
+                rngs_key = jax.tree.map(jax.random.key_data, state.filter(nnx.RngKey))  # type: ignore
+                merge_state(state, rngs_key)  # type: ignore
 
                 _, opt_state = nnx.split(optimizer.opt_state)
                 ckpt_mgr.save(
                     1,
                     args=ocp.args.Composite(
-                        state=ocp.args.StandardSave(state), # type: ignore
-                        opt_state=ocp.args.StandardSave(opt_state), # type: ignore
+                        state=ocp.args.StandardSave(state),  # type: ignore
+                        opt_state=ocp.args.StandardSave(opt_state),  # type: ignore
                     ),
                 )
-            val_loss = 0
-            for i, batch in tqdm(enumerate(val_dataloader)):
+            val_loss = 0.0
+            n_val = 0
+            for batch in tqdm(val_dataloader):
                 trajectory, context = jnp.asarray(batch[0]), jnp.asarray(batch[1])
                 val_loss += eval_step(self.model, trajectory, context)
-            val_loss /= i * batch[0].shape[0] * batch[0].shape[1]
+                n_val += batch[0].shape[0] * batch[0].shape[1]
+            val_loss /= n_val
             early_stop.update(val_loss)
 
             if early_stop.should_stop:
@@ -283,7 +310,7 @@ class LinearGaussModel(BaseTrajectoryModel):
         key: jax.Array = random.PRNGKey(0),
         num_samples: int = 1,
     ) -> jnp.ndarray:
-        
+
         times = self._get_prediction_steps(start_time, prediction_length)
         num_preds = num_samples
         cur_coord = jnp.array([start_position])
@@ -296,9 +323,10 @@ class LinearGaussModel(BaseTrajectoryModel):
             interpolator: Interpolator3D,
             i: int,
         ) -> tuple[nnx.Module, jnp.ndarray]:
-            
+
             model, key = carry
             key, subkey = random.split(key)
+
             @nnx.scan
             def scan_fn(
                 carry: tuple[nnx.Module, jnp.ndarray, jax.Array], t: jnp.ndarray
@@ -308,10 +336,12 @@ class LinearGaussModel(BaseTrajectoryModel):
                 context = test_dataset.get_context(
                     jnp.array([t]), cur_coord, interpolator
                 )[..., self.var_idx]
-                pred_vel = model(context, key=subkey) # type: ignore
-                speed, bearing = data_transform.velocity_to_distance_bearing(pred_vel[0])
+                pred_vel = model(context, key=subkey)  # type: ignore
+                speed, bearing = data_transform.velocity_to_distance_bearing(
+                    pred_vel[0]
+                )
                 new_coord = data_transform.inverse_haversine(
-                    cur_coord[0], 3600 * speed, bearing     # type: ignore
+                    cur_coord[0], 3600 * speed, bearing  # type: ignore
                 )
                 return (
                     model,
@@ -319,26 +349,23 @@ class LinearGaussModel(BaseTrajectoryModel):
                     key,
                 ), new_coord
 
-            init = (
-                model,
-                jnp.array([start_position], dtype=float),
-                subkey
-            )
+            init = (model, jnp.array([start_position], dtype=float), subkey)
 
             _, pred_coords = scan_fn(init, times)
             return (model, key), pred_coords
 
         init = (self.model, key)
-        _ , pred_coords = nnx.scan(
+        _, pred_coords = nnx.scan(
             lambda carry, i: pred_trajectory(
                 carry, start_position, times[:-1], interpolator, i
             )
         )(init, jnp.arange(num_preds))
 
         return pred_coords
-    
-    
-    def export_trained_model(self, model_name: str | None= None, export_path: str|None = None) -> None:
+
+    def export_trained_model(
+        self, model_name: str | None = None, export_path: str | None = None
+    ) -> None:
         """
         Exports the trained model to a specified path.
 
@@ -349,30 +376,34 @@ class LinearGaussModel(BaseTrajectoryModel):
         Raises:
             ValueError: If the model parameters are not set.
         """
-        
+
         if model_name is None:
             model_name = self.name
         if export_path is None:
             export_path = os.path.join(config_paths.MODEL_PATH, "trained_models")
-        
+
         model_path = os.path.join(export_path, model_name)
         if not os.path.exists(model_path):
             os.makedirs(model_path)
         else:
-            raise Exception(f"Model {model_name} already exists at {model_path}. Please delete it or change the model name.")
+            raise Exception(
+                f"Model {model_name} already exists at {model_path}. Please delete it or change the model name."
+            )
 
-        #nn_params_path = os.path.join(model_path, "nn_params.npz")
-        #jnp.savez(nn_params_path, params=self.nn_params, allow_pickle=True)
+        # nn_params_path = os.path.join(model_path, "nn_params.npz")
+        # jnp.savez(nn_params_path, params=self.nn_params, allow_pickle=True)
         with open(os.path.join(model_path, "model_config.yml"), "w") as f:
             yaml.dump(self.params, f, default_flow_style=False)
-            
+
         nnx_model_path = os.path.join(model_path, "nnx_model.pkl")
         graph, state = nnx.split(self.model)
         with open(nnx_model_path, "wb") as f:
             pickle.dump(state, f)
-            
+
     @classmethod
-    def import_trained_model(cls, model_name: str, import_path: str | None = None) -> "LinearGaussModel":
+    def import_trained_model(
+        cls, model_name: str, import_path: str | None = None
+    ) -> "LinearGaussModel":
         """
         Imports a trained LinearGaussModel from the specified path.
 
@@ -385,14 +416,16 @@ class LinearGaussModel(BaseTrajectoryModel):
         """
         if import_path is None:
             import_path = os.path.join(config_paths.MODEL_PATH, "trained_models")
-        
+
         model_path = os.path.join(import_path, model_name)
         with open(os.path.join(model_path, "model_config.yml"), "r") as f:
             model_config = yaml.safe_load(f)
-        
+
         nnx_model_path = os.path.join(model_path, "nnx_model.pkl")
         if not os.path.exists(nnx_model_path):
-            raise FileNotFoundError(f"NNX parameters file {nnx_model_path} does not exist.")
+            raise FileNotFoundError(
+                f"NNX parameters file {nnx_model_path} does not exist."
+            )
 
         with open(nnx_model_path, "rb") as f:
             state = pickle.load(f)
@@ -402,4 +435,3 @@ class LinearGaussModel(BaseTrajectoryModel):
         model.model = nnx.merge(graph, state)
         model.trained_sucessfully = True
         return model
-        
