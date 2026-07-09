@@ -1,6 +1,3 @@
-# %%
-# %load_ext autoreload
-# %autoreload 2
 import argparse
 import os
 
@@ -122,45 +119,3 @@ if __name__ == "__main__":
             },
         )
         model.export_trained_model(model.name)
-
-
-# %%
-# class Args:
-#     dataset = 'coastline'
-#     num_epochs = 10
-#     num_batches_per_epoch = 10
-#     batch_size = 32
-#     train_size = 0.95
-
-# args = Args()
-
-# # %%
-
-# if args.dataset == 'open_ocean':
-#     length = 72
-#     dataset = AdoptTrainingDataset.from_disk('/mydata/adopt/christian/adopt/data/datasets/open_ocean/datasets', length)
-# elif args.dataset == 'coastline':
-#     length = 24
-#     dataset = AdoptTrainingDataset.from_disk('/mydata/adopt/christian/adopt/data/datasets/coastline_data', length)
-# else:
-#     raise ValueError('Dataset not found')
-# dataset.remove_nans()
-# dataset.shuffle()
-# train_dataset, val_dataset = dataset.split(0.9)
-# #train_dataset.load_into_memory()
-# #val_dataset.load_into_memory()
-# # %%
-# model = DiffusionModel(name=f'diffusion_model_{args.dataset}', params={
-#     'prediction_length': length,
-# })
-# # %%
-# model.fit(train_dataset, val_dataset, train_params={
-#     'num_batches_per_epoch': args.num_batches_per_epoch,
-#     'num_epochs': args.num_epochs,
-#     'batch_size': args.batch_size
-# })
-
-# # %%
-
-
-# # %%

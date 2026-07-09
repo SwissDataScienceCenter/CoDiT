@@ -1,4 +1,3 @@
-# %%
 import argparse
 import os
 
@@ -8,8 +7,6 @@ import numpy as np
 from codit.data_module import config_paths
 from codit.data_module.dataset import OceanTrainingDataset
 from codit.model_module.linear_gauss_model import LinearGaussModel
-
-# %%
 
 if __name__ == "__main__":
 
@@ -62,5 +59,3 @@ if __name__ == "__main__":
         },
     )
     model.export_trained_model()
-
-# %%
