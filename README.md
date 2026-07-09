@@ -118,6 +118,80 @@ CoDiT/
 └── paper/                      # CoDiT paper (PDF, TeX)
 ```
 
+## Training
+
+### CoDiT (main model)
+
+```bash
+python my_scripts/model_fitting/codit_train.py \
+    --dataset open_ocean \
+    --model_type GRU \
+    --context_encoder_type conv \
+    --K 100 \
+    --num_epochs 100 \
+    --num_batches_per_epoch 100 \
+    --batch_size 1024 \
+    --learning_rate 1e-3 \
+    --optimizer adam \
+    --scheduler constant \
+    --input_vars hycom_current copernicus_current era5_wind bathymetry \
+    --run_name my_experiment
+```
+
+Key arguments:
+
+| Argument | Default | Description |
+|---|---|---|
+| `--dataset` | `open_ocean` | `open_ocean` (72 h horizon) or `coastline` (24 h) |
+| `--model_type` | `GRU` | Denoiser: `GRU` or `Transformer` |
+| `--context_encoder_type` | `conv` | Context encoder: `conv`, `mlp`, or `gap` |
+| `--K` | `100` | Number of diffusion steps |
+| `--input_vars` | all four | Space-separated context variable names |
+| `--optimizer` | `adam` | `adam`, `adamw`, or `sgd` |
+| `--scheduler` | `constant` | LR schedule: `constant` or `cosine` |
+| `--early_stopping_patience` | `10` | Epochs without val improvement before stopping |
+| `--run_name` | `""` | Optional suffix appended to the model checkpoint name |
+
+The trained model is saved to `data/trained_models/ckpts/<model_name>/`.
+
+**Expected resources:** ~2 h on a single GPU (NVIDIA A100) for 100 epochs on `open_ocean`.
+CPU training is supported but will be ~10× slower.
+
+### Linear Gaussian baseline
+
+```bash
+python my_scripts/model_fitting/lingauss_train.py \
+    --dataset open_ocean \
+    --num_epochs 1000 \
+    --num_batches_per_epoch 100 \
+    --batch_size 128
+```
+
+Trains in under 10 minutes on CPU.
+
+### WandB experiment tracking
+
+CoDiT is set up to use [Weights & Biases](https://wandb.ai) for experiment tracking.
+Before training, authenticate:
+
+```bash
+wandb login
+```
+
+Run names follow the convention:
+
+```
+codit_{model_type}_{dataset}_{context_encoder}_{optimizer}_K{K}_{vars}[_{run_name}]
+```
+
+Example: `codit_GRU_open_ocean_conv_adam_K100_hycom_current_copernicus_current_era5_wind_bathymetry`
+
+To disable WandB logging entirely:
+
+```bash
+export WANDB_MODE=disabled
+```
+
 ## Cite
 
 If you find this helpful, please cite:
