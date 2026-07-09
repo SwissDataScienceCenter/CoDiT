@@ -202,3 +202,11 @@ If you find this helpful, please cite:
 
 Global Drifter Program, HYCOM, Copernicus Marine Service, CDS, GEBCO,
 Swiss Data Science Center (SDSC)
+
+## Oceancleanup dataset (private)
+
+The oceancleanup application dataset is not publicly distributed. It uses data provided
+by [The Ocean Cleanup](https://theoceancleanup.com/) under a separate data agreement.
+
+To use it, place the dataset under `$CODIT_DATA_PATH/datasets/oceancleanup/` following
+the same directory structure as the public datasets. Evaluation scripts are in `oceancleanup/`.
