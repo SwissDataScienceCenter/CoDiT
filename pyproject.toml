@@ -34,6 +34,7 @@ dependencies = [
     "geopandas",
     "wandb",
     "scipy>=1.7.3",
+    "torch",
 ]
 
 [project.optional-dependencies]
@@ -64,3 +65,7 @@ disallow_untyped_defs = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::UserWarning",
+]
