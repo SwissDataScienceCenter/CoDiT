@@ -578,7 +578,7 @@ def download_copernicus(config: dict) -> None:
             )
         elif start_date >= datetime(2021, 7, 1) and end_date >= datetime(2021, 7, 1):
             copernicusmarine.subset(
-                dataset_id="cmems_mod_glo_phy_myint_0.083deg_P1D-m",
+                dataset_id="cmems_mod_glo_phy_my_0.083deg_P1D-m",
                 variables=["uo", "vo"],
                 minimum_longitude=west - context_delta,
                 maximum_longitude=east + context_delta,
@@ -613,7 +613,7 @@ def download_copernicus(config: dict) -> None:
                 # no_metadata_cache=True
             )
             copernicusmarine.subset(
-                dataset_id="cmems_mod_glo_phy_myint_0.083deg_P1D-m",
+                dataset_id="cmems_mod_glo_phy_my_0.083deg_P1D-m",
                 variables=["uo", "vo"],
                 minimum_longitude=west - context_delta,
                 maximum_longitude=east + context_delta,

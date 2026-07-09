@@ -1,11 +1,11 @@
 # Custom
 *.ini
-*config_paths.py
 data/datasets/*
 data/configs/*
 data/bathymetry/*
 wip/
 my_scripts/*
+!my_scripts/model_fitting/
 runai_scripts/*
 
 # Byte-compiled / optimized / DLL files
@@ -217,7 +217,6 @@ marimo/_lsp/
 __marimo__/
 
 plans/*
-docs/*
+docs/_build/
 .claude/*
-.github/*
 .vscode/*

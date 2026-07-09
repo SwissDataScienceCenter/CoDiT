@@ -8,6 +8,8 @@ import os
 
 import yaml
 
+from codit.data_module import config_paths
+
 
 def complete_config(config: dict) -> dict:
     """Complete the config dictionary with paths and filenames based on the provided configuration.
@@ -77,6 +79,16 @@ def load_config(data_name: str, config_path: str) -> dict:
     path = os.path.join(config_path, data_name + ".yml")
     with open(path, "r") as f:
         config = yaml.safe_load(f)
+
+    # Reconstruct dataset_path relative to current DATA_PATH.
+    # YAML configs store stale absolute paths from the original environment.
+    # Config directory structure mirrors dataset structure:
+    #   config lives at:  CONFIG_PATH/{dataset}/{split}/{name}.yml
+    #   data lives at:    DATA_PATH/datasets/{dataset}/{split}/{name}/
+    rel = os.path.relpath(config_path, config_paths.CONFIG_PATH)
+    config["dataset_path"] = os.path.join(
+        config_paths.DATA_PATH, "datasets", rel, config["name"]
+    )
 
     config = complete_config(config)
     return config

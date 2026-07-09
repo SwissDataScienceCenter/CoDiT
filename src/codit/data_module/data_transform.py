@@ -29,7 +29,9 @@ def velocity_to_distance_bearing(
     return speed, bearing_deg
 
 
-def inverse_haversine(pos: tuple | jax.Array, distance: float | jax.Array, bearing: float | jax.Array) -> jax.Array:
+def inverse_haversine(
+    pos: tuple | jax.Array, distance: float | jax.Array, bearing: float | jax.Array
+) -> jax.Array:
     """
     Calculate the new latitude and longitude given a starting point,
     distance (in meters), and bearing (in degrees) using JAX.
@@ -160,3 +162,21 @@ def haversine_distance(pos1: jax.Array, pos2: jax.Array) -> jax.Array:
     # Distance in meters
     distance = R * c
     return distance
+
+
+def transform_traj_to_metre(traj: jnp.ndarray) -> jnp.ndarray:
+    """Convert a trajectory from (lat, lon) degrees to per-step displacement vectors in metres.
+
+    Parameters:
+        traj: (T, 2) array of [lat, lon] positions in degrees.
+
+    Returns:
+        (T, 2) array — element [t] is the displacement vector from traj[0] to traj[t],
+        expressed as a velocity * 3600 s (i.e. metres per hour-step).
+        The first row corresponds to the zero-displacement at the origin.
+    """
+    velocity_vectors = jax.vmap(velocity_vector_from_pos_time, in_axes=(None, 0, None))(
+        traj[0], traj, 3600
+    )
+    traj_in_metres = velocity_vectors * 3600
+    return traj_in_metres

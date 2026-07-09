@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [dev, main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    name: Lint (ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - name: Install ruff
+        run: pip install ruff
+      - name: Run ruff
+        run: ruff check src/ tests/
+
+  typecheck:
+    name: Type check (mypy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+      - name: Install type-check dependencies
+        run: pip install mypy types-PyYAML jax numpy flax scipy
+      - name: Run mypy on typed modules
+        run: |
+          mypy src/codit/eval_module \
+               src/codit/codit_module/scheduler.py \
+               src/codit/codit_module/noising_functions.py \
+               src/codit/data_module/data_transform.py \
+               src/codit/data_module/config_paths.py \
+               --ignore-missing-imports
+
+  test:
+    name: Unit and integration tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+      - name: Install package with dev extras
+        run: pip install -e ".[dev]"
+      - name: Run tests
+        env:
+          WANDB_MODE: disabled
+          CODIT_DATA_PATH: /tmp/codit_data
+        run: pytest tests/ -v --tb=short

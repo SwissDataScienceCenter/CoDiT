@@ -1,3 +1,4 @@
+import copy
 import os
 from datetime import datetime, timedelta
 
@@ -37,6 +38,7 @@ class OceanDataset(Dataset):
             delta_metres: The size of the patch around the drifter that is considered for context.
             interp_method: The interpolation method to use. At the moment only 'linear' is supported.
         """
+        config = copy.deepcopy(config)
         self.dataset_name = config["name"]
         self.length = length
         self.num_grid_points = num_grid_points
