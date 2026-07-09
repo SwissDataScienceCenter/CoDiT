@@ -11,8 +11,6 @@ except ImportError:
     zarr = None  # type: ignore[assignment]
 import xarray as xr
 
-from codit.data_module import data_transform
-from codit.data_module.dataset import OceanDataset
 from codit.model_module.base_model import BaseTrajectoryModel
 
 
@@ -42,6 +40,11 @@ class GlorysParcelsModel(BaseTrajectoryModel):
         test_dataset,
         **kwargs,
     ) -> jnp.ndarray:
+        if parcels is None:
+            raise ImportError(
+                "The 'parcels' package is required for GlorysParcelsModel. "
+                "Install it with: conda install -c conda-forge parcels"
+            )
         ds_uv = self._extract_uv_dataset(
             test_dataset, start_time, prediction_length + 1
         )

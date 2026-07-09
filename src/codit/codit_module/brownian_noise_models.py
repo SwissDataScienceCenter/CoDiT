@@ -1,4 +1,3 @@
-from flax import linen as nn
 from flax import struct
 from jax import lax, random
 from jax import numpy as jnp
