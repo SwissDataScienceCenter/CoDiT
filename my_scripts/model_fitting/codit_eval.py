@@ -5,13 +5,12 @@ import os
 import warnings
 
 from jax import numpy as jnp
-from jax import vmap
 from tqdm import tqdm
 import numpy as np
 from codit.data_module import config_paths
 from codit.data_module import config_funcs
 from codit.data_module.dataset import OceanDataset
-from codit.data_module import data_transform
+from codit.eval_module.eval_runner import run_eval
 from codit.model_module.diffusion_model import CoDiTModel
 
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -31,14 +30,28 @@ if __name__ == "__main__":
     parser.add_argument("--scheduler", type=str, default="constant")  # constant, cosine
     parser.add_argument("--evaluate_subset", action="store_true", default=False)
     parser.add_argument("--K", type=int, default=100)  # number of diffusion steps
-    parser.add_argument("--input_vars", nargs='+', type=str, 
-                    default=["hycom_current", "copernicus_current", "era5_wind", "bathymetry"], 
-                    help="Input variables for the model")
-    parser.add_argument("--run_name", type=str, default="", help="Optional run name for logging and saving results")
-    parser.add_argument("--model_name", type=str, default="", help="Override model name (must match directory in data/trained_models/)")
+    parser.add_argument(
+        "--input_vars",
+        nargs="+",
+        type=str,
+        default=["hycom_current", "copernicus_current", "era5_wind", "bathymetry"],
+        help="Input variables for the model",
+    )
+    parser.add_argument(
+        "--run_name",
+        type=str,
+        default="",
+        help="Optional run name for logging and saving results",
+    )
+    parser.add_argument(
+        "--model_name",
+        type=str,
+        default="",
+        help="Override model name (must match directory in data/trained_models/)",
+    )
     args = parser.parse_args()
     np.random.seed(0)
-    
+
     if args.model_name:
         model_name = args.model_name
     else:
@@ -49,11 +62,7 @@ if __name__ == "__main__":
             model_name += f"_{args.run_name}"
     print(f"Model name: {model_name}")
     if args.dataset == "open_ocean":
-        config_path = os.path.join(
-            config_paths.CONFIG_PATH,
-            "open_ocean",
-            args.split
-        )
+        config_path = os.path.join(config_paths.CONFIG_PATH, "open_ocean", args.split)
         result_path = os.path.join(
             config_paths.RESULT_PATH,
             "open_ocean",
@@ -68,7 +77,7 @@ if __name__ == "__main__":
         result_path = os.path.join(
             config_paths.RESULT_PATH,
             "coastline",
-            args.split, 
+            args.split,
             model_name,
         )
         length = 24
@@ -97,8 +106,7 @@ if __name__ == "__main__":
             except Exception as e:
                 print(f"Error loading dataset {val_dataname}: {e}")
                 continue
-            
-            distances, pred_coords, true_coords = [], [], []
+
             if len(test_dataset) == 0:
                 print(f"Empty dataset: {val_dataname}")
                 continue
@@ -107,30 +115,17 @@ if __name__ == "__main__":
                 indices = np.linspace(0, len(test_dataset) - 1, 200, dtype=int)
             else:
                 indices = range(len(test_dataset))
-            for idx in indices:
-                try:
-                    start_position, start_time, times, interpolator, coordinates = test_dataset[idx]
-                    print(f"Processing {data_name} {idx}/{len(test_dataset)}")
-                    pred_coord = model.predict(
-                        start_position,
-                        start_time,
-                        length,
-                        interpolator,
-                        test_dataset,
-                        num_samples=100,
-                    )
-                    distance = vmap(
-                        vmap(data_transform.haversine_distance), in_axes=(None, 0)
-                    )(coordinates[1:, :], pred_coord[:, :])
-                    distances.append(distance[None])
-                    pred_coords.append(pred_coord[None])
-                    true_coords.append(coordinates[:, :][None])
-                except ValueError as e:
-                    print(f"Error loading dataset {val_dataname}: {e}")
-                    continue
-            distances = jnp.concatenate(distances, axis=0)
-            pred_coords = jnp.concatenate(pred_coords, axis=0)
-            true_coords = jnp.concatenate(true_coords, axis=0)
+            try:
+                distances, pred_coords, true_coords = run_eval(
+                    model,
+                    test_dataset,
+                    indices=indices,
+                    length=length,
+                    num_samples=args.num_samples,
+                )
+            except ValueError as e:
+                print(f"Error evaluating dataset {val_dataname}: {e}")
+                continue
             jnp.savez(
                 result_file,
                 distance=distances,
