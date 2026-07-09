@@ -188,6 +188,48 @@ def restore_checkpoint(ckpt_file: str) -> tuple[nn.Module, list, list, jnp.ndarr
 
 
 class CoDiTModel(BaseTrajectoryModel):
+    """Conditional denoising diffusion model for ocean drifter trajectory prediction.
+
+    CoDiT frames trajectory generation as a reverse diffusion process conditioned on
+    spatiotemporal ocean context (currents, wind, bathymetry). At inference time it
+    draws ``num_samples`` trajectory samples from the learned conditional distribution
+    by running K reverse-diffusion steps.
+
+    Supported denoiser architectures (``params["model_type"]``):
+
+    - ``"GRU"``: autoregressive GRU denoiser (default, faster to train)
+    - ``"Transformer"``: autoregressive Transformer denoiser (more expressive)
+
+    Args:
+        name: Unique model identifier used as the checkpoint directory name.
+        params: Model hyperparameters. Unset keys fall back to internal defaults:
+
+            - ``prediction_length`` (int): number of trajectory steps to predict (**required**)
+            - ``dt`` (float): time step in fractional days (default ``0.1``; set to ``1/prediction_length``)
+            - ``model_type`` (str): ``"GRU"`` or ``"Transformer"`` (default ``"GRU"``)
+            - ``context_encoder_type`` (str): ``"conv"``, ``"mlp"``, or ``"gap"`` (default ``"conv"``)
+            - ``K`` (int): number of diffusion steps (default ``100``)
+            - ``num_layers`` (int): GRU/Transformer depth (default ``2``)
+            - ``hidden_dims`` (int): hidden state dimensionality (default ``64``)
+            - ``diffusion_emb`` (int): diffusion-timestep embedding size (default ``64``)
+            - ``vars`` (list[str]): context variable names used to select ``var_idx``
+            - ``noise`` (str): noise model type, ``"brownian_motion"`` (default)
+            - ``beta_min`` / ``beta_max`` (float): diffusion schedule bounds (defaults ``1e-4`` / ``0.02``)
+
+    Example::
+
+        model = CoDiTModel(
+            name="codit_GRU_open_ocean",
+            params={
+                "prediction_length": 72,
+                "dt": 1 / 72,
+                "model_type": "GRU",
+                "context_encoder_type": "conv",
+                "K": 100,
+                "vars": ["hycom_current", "copernicus_current", "era5_wind", "bathymetry"],
+            },
+        )
+    """
 
     def __init__(self, name: str, params: dict) -> None:
 
@@ -286,6 +328,31 @@ class CoDiTModel(BaseTrajectoryModel):
         val_dataset: OceanTrainingDataset,
         train_params: dict | None = None,
     ) -> "CoDiTModel":
+        """Train CoDiT via denoising score matching.
+
+        Iterates ``num_epochs`` epochs of ``num_batches_per_epoch`` gradient steps.
+        Each step samples a batch, applies the forward diffusion process, predicts
+        the noise with the denoiser, and minimises the MSE between predicted and
+        true noise. Early stopping is applied on the validation loss.
+
+        Args:
+            train_dataset: Training split with trajectories and context arrays loaded.
+            val_dataset: Validation split used for early stopping.
+            train_params: Training hyperparameters. Supported keys:
+
+                - ``num_epochs`` (int): maximum training epochs (default ``100``)
+                - ``num_batches_per_epoch`` (int): gradient steps per epoch (default ``100``)
+                - ``batch_size`` (int): samples per gradient step (default ``1024``)
+                - ``learning_rate`` (float): initial learning rate (default ``1e-3``)
+                - ``optimizer`` (str): ``"adam"``, ``"adamw"``, or ``"sgd"`` (default ``"adam"``)
+                - ``scheduler``: an ``optax`` schedule instance or ``None`` for constant LR
+                - ``early_stopping_patience`` (int): val-epochs without improvement before stopping (default ``10``)
+                - ``early_stopping_min_delta`` (float): minimum improvement threshold (default ``1e-4``)
+                - ``force_retrain`` (bool): retrain even if a checkpoint already exists (default ``False``)
+
+        Returns:
+            self, with ``nn_params`` populated and ``trained_successfully`` set to ``True``.
+        """
         if train_params is None:
             train_params = {}
         # return self
@@ -452,7 +519,28 @@ class CoDiTModel(BaseTrajectoryModel):
         key: jax.Array = random.PRNGKey(0),
         return_denoising_steps: bool = False,
     ) -> jnp.ndarray | tuple[jnp.ndarray, jnp.ndarray]:
+        """Sample trajectory predictions from the trained diffusion model.
 
+        Runs the full K-step reverse diffusion chain independently ``num_samples`` times,
+        each starting from a different Brownian-motion initialisation.
+
+        Args:
+            start_position: Lat/lon of the drifter at ``start_time``, shape ``(2,)`` in decimal degrees.
+            start_time: Absolute UTC datetime for the first prediction step.
+            prediction_length: Number of hourly time steps to predict.
+            interpolator: Pre-built ``interpax.Interpolator3D`` covering the spatial and
+                temporal domain of the prediction window.
+            test_dataset: ``OceanDataset`` providing context feature extraction via ``get_context()``.
+            num_samples: Number of independent trajectory samples to draw.
+            key: JAX PRNG key used for reproducible noise sampling.
+            return_denoising_steps: If ``True``, also return the intermediate denoising
+                trajectory of shape ``(num_samples, K, prediction_length, 2)``.
+
+        Returns:
+            Predicted trajectories as ``jnp.ndarray`` of shape ``(num_samples, prediction_length, 2)``
+            in decimal degrees (lat, lon). If ``return_denoising_steps=True``, returns a tuple
+            ``(trajectories, denoising_steps)``.
+        """
         times = self._get_prediction_steps(start_time, prediction_length)
         prediction_length = len(times) - 1
         start_context = test_dataset.get_context(
@@ -578,6 +666,13 @@ class CoDiTModel(BaseTrajectoryModel):
     def export_trained_model(
         self, model_name: str | None = None, export_path: str | None = None
     ) -> None:
+        """Save the model's neural-network parameters to an Orbax checkpoint directory.
+
+        Args:
+            model_name: Checkpoint folder name. Defaults to ``self.name``.
+            export_path: Parent directory for the checkpoint. Defaults to
+                ``config_paths.MODEL_PATH``.
+        """
         if model_name is None:
             model_name = self.name
         if export_path is None:
@@ -609,15 +704,18 @@ class CoDiTModel(BaseTrajectoryModel):
     def import_trained_model(
         cls, model_name: str, import_path: str | None = None
     ) -> "CoDiTModel":
-        """
-        Imports a trained model from the specified path.
+        """Restore a trained model from an Orbax checkpoint directory.
 
         Args:
-            model_name (str): The name of the model to import.
-            model_path (str): The path where the model is stored.
+            model_name: Name of the checkpoint directory to load.
+            import_path: Parent directory to search. Defaults to
+                ``config_paths.MODEL_PATH``.
 
         Returns:
-            DiffusionModel: An instance of the DiffusionModel class with the loaded parameters.
+            A ``CoDiTModel`` instance with parameters restored from the checkpoint.
+
+        Raises:
+            FileNotFoundError: If the checkpoint directory does not exist.
         """
         if import_path is None:
             import_path = os.path.join(config_paths.MODEL_PATH, "trained_models")
