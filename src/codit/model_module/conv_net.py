@@ -136,10 +136,10 @@ class ConvNetModel(BaseTrajectoryModel):
             params (dict): The parameters for the model.
             model (ConvNet): The ConvNet model instance.
             ckpt_dir (str): Directory path for model checkpoints.
-            trained_sucessfully (bool): Indicates whether the model was successfully restored from a checkpoint.
+            trained_successfully (bool): Indicates whether the model was successfully restored from a checkpoint.
 
         Raises:
-            Exception: If restoring the model state from checkpoint fails, sets `trained_sucessfully` to False.
+            Exception: If restoring the model state from checkpoint fails, sets `trained_successfully` to False.
         """
         super().__init__(name, params)
         self.type = "conv_net"
@@ -151,12 +151,12 @@ class ConvNetModel(BaseTrajectoryModel):
         if load_ckpt:
             try:
                 self.model = load_checkpoint(self.model, self.ckpt_dir)
-                self.trained_sucessfully = True
+                self.trained_successfully = True
             except Exception as e:
                 print(f"Error restoring model state: {e}")
-                self.trained_sucessfully = False
+                self.trained_successfully = False
         else:
-            self.trained_sucessfully = False
+            self.trained_successfully = False
 
     def _fit(
         self,
@@ -408,5 +408,5 @@ class ConvNetModel(BaseTrajectoryModel):
         model = cls(model_name, model_config, load_ckpt=False)
         graph, _ = nnx.split(model.model)
         model.model = nnx.merge(graph, state)
-        model.trained_sucessfully = True
+        model.trained_successfully = True
         return model

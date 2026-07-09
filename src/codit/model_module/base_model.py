@@ -29,7 +29,7 @@ class BaseTrajectoryModel(ABC):
             'copernicus_current', 'era5_wind', and 'bathymetry', which selects the corresponding input variables.
             If nothing is indicated, all variables are taken.
         training_sets (list): Names of the training sets used.
-        trained_sucessfully (bool): Indicates if the model has been trained successfully.
+        trained_successfully (bool): Indicates if the model has been trained successfully.
 
     Methods:
         set_model_name(name: str) -> AdoptBaseModel:
@@ -67,13 +67,13 @@ class BaseTrajectoryModel(ABC):
             type (str): The type of the model, set to "base_model".
             params (dict): The parameters for the model.
             training_set: The training dataset, initialized as None.
-            trained_sucessfully (bool): Indicates if the model has been trained successfully, initialized as False.
+            trained_successfully (bool): Indicates if the model has been trained successfully, initialized as False.
         """
         self.name = name
         self.type = "base_model"
         self.params = params
         self.training_set = None
-        self.trained_sucessfully = False
+        self.trained_successfully = False
         
         self.vars = self.params.get('vars', None)
         if self.vars is None:
@@ -122,11 +122,11 @@ class BaseTrajectoryModel(ABC):
         Side Effects:
             - Sets the `training_sets` attribute to the list of training set names.
             - Calls the internal `_fit` method with the training configurations.
-            - Sets the `trained_sucessfully` attribute to True.
+            - Sets the `trained_successfully` attribute to True.
         """
         # self.training_sets = [config["name"] for config in train_configs]
         self._fit(train_dataloader, val_dataloader, train_params)
-        self.trained_sucessfully = True
+        self.trained_successfully = True
         return self
 
     @abstractmethod
@@ -162,7 +162,7 @@ class BaseTrajectoryModel(ABC):
             "name": self.name,
             "type": self.type,
             "params": self.params,
-            "trained_sucessfully": self.trained_sucessfully,
+            "trained_successfully": self.trained_successfully,
         }
 
     def save(self, model_path: str) -> None:
@@ -182,7 +182,7 @@ class BaseTrajectoryModel(ABC):
             Exception: If the model has not been trained yet.
             Exception: If a model file with the same name already exists.
         """
-        if self.trained_sucessfully:
+        if self.trained_successfully:
             model_config = self.create_config()
             model_config["save_path"] = os.path.join(
                 model_path, "params", self.name + ".pkl"

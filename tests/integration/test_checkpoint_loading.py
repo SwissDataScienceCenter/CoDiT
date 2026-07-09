@@ -36,7 +36,7 @@ def test_linear_gauss_checkpoint_loads():
     model = LinearGaussModel.import_trained_model(
         "linear_gauss_open_ocean", import_path=_MODELS_DIR
     )
-    assert model.trained_sucessfully is True
+    assert model.trained_successfully is True
     assert model.type == "linear_gauss"
 
 
@@ -75,7 +75,7 @@ def test_linear_gauss_coastline_checkpoint_loads():
     model = LinearGaussModel.import_trained_model(
         "linear_gauss_coastline", import_path=_MODELS_DIR
     )
-    assert model.trained_sucessfully is True
+    assert model.trained_successfully is True
 
 
 @requires_codit
