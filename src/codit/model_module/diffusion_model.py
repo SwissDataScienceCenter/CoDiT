@@ -340,10 +340,10 @@ class CoDiTModel(BaseTrajectoryModel):
             val_dataset: Validation split used for early stopping.
             train_params: Training hyperparameters. Supported keys:
 
-                - ``num_epochs`` (int): maximum training epochs (default ``100``)
+                - ``num_epochs`` (int): maximum training epochs (default ``1000``)
                 - ``num_batches_per_epoch`` (int): gradient steps per epoch (default ``100``)
-                - ``batch_size`` (int): samples per gradient step (default ``1024``)
-                - ``learning_rate`` (float): initial learning rate (default ``1e-3``)
+                - ``batch_size`` (int): samples per gradient step (default ``128``)
+                - ``learning_rate`` (float): initial learning rate (default ``1e-4``)
                 - ``optimizer`` (str): ``"adam"``, ``"adamw"``, or ``"sgd"`` (default ``"adam"``)
                 - ``scheduler``: an ``optax`` schedule instance or ``None`` for constant LR
                 - ``early_stopping_patience`` (int): val-epochs without improvement before stopping (default ``10``)
@@ -666,7 +666,7 @@ class CoDiTModel(BaseTrajectoryModel):
     def export_trained_model(
         self, model_name: str | None = None, export_path: str | None = None
     ) -> None:
-        """Save the model's neural-network parameters to an Orbax checkpoint directory.
+        """Save the model's neural-network parameters to a checkpoint directory.
 
         Args:
             model_name: Checkpoint folder name. Defaults to ``self.name``.
@@ -704,7 +704,7 @@ class CoDiTModel(BaseTrajectoryModel):
     def import_trained_model(
         cls, model_name: str, import_path: str | None = None
     ) -> "CoDiTModel":
-        """Restore a trained model from an Orbax checkpoint directory.
+        """Restore a trained model from a checkpoint directory.
 
         Args:
             model_name: Name of the checkpoint directory to load.
@@ -715,7 +715,10 @@ class CoDiTModel(BaseTrajectoryModel):
             A ``CoDiTModel`` instance with parameters restored from the checkpoint.
 
         Raises:
-            FileNotFoundError: If the checkpoint directory does not exist.
+            FileNotFoundError: If ``model_config.yml`` does not exist in the checkpoint
+                directory.
+            FileNotFoundError: If ``nn_params.npz`` does not exist in the checkpoint
+                directory.
         """
         if import_path is None:
             import_path = os.path.join(config_paths.MODEL_PATH, "trained_models")
