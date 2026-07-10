@@ -1,3 +1,7 @@
+import os
+
+os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
+
 import jax
 import pytest
 from codit.codit_module.brownian_noise_models import WalkNoiseModel
