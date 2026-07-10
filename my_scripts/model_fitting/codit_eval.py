@@ -49,6 +49,12 @@ if __name__ == "__main__":
         default="",
         help="Override model name (must match directory in data/trained_models/)",
     )
+    parser.add_argument(
+        "--result_subdir",
+        type=str,
+        default="",
+        help="Optional subdirectory inserted between --split and the model name in the result path. Default '' preserves the original path.",
+    )
     args = parser.parse_args()
     np.random.seed(0)
 
@@ -67,6 +73,7 @@ if __name__ == "__main__":
             config_paths.RESULT_PATH,
             "open_ocean",
             args.split,
+            args.result_subdir,
             model_name,
         )
         length = 72
@@ -78,6 +85,7 @@ if __name__ == "__main__":
             config_paths.RESULT_PATH,
             "coastline",
             args.split,
+            args.result_subdir,
             model_name,
         )
         length = 24
