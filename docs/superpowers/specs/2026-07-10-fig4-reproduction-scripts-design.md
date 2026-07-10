@@ -133,40 +133,78 @@ python summarize_fig4.py --dataset {open_ocean,coastline} \
 
 ### 3. New shell scripts
 
-**`runai_scripts/fig4_open_ocean.sh`**
+Each dataset gets one eval-launcher script parameterized by model, so the
+user can submit **6 independent RunAI jobs in parallel** (2 datasets × 3
+models). A seventh (per-dataset) summary script is launched after the three
+eval jobs for a dataset finish.
+
+**`runai_scripts/fig4_open_ocean.sh <model> [split] [subdir]`**
+
+Positional args:
+- `<model>` — one of `gru`, `tf`, `lingauss`
+- `[split]` — default `test`
+- `[subdir]` — default `fig4_repro`
 
 ```bash
 #!/bin/bash
+set -euo pipefail
+model=$1
+split=${2:-test}
+subdir=${3:-fig4_repro}
+
 source ~/.bashrc
 micromamba activate codit
 cd /mydata/adopt/christian/CoDiT/my_scripts/model_fitting
 
-split=${1:-test}
-subdir=${2:-fig4_repro}
-
 input_vars="hycom_current copernicus_current era5_wind"
 
-python codit_eval.py --dataset open_ocean --split "$split" \
-  --model_type GRU --context_encoder_type conv --optimizer adam --K 100 \
-  --input_vars $input_vars --result_subdir "$subdir"
+case "$model" in
+  gru)
+    python codit_eval.py --dataset open_ocean --split "$split" \
+      --model_type GRU --context_encoder_type conv --optimizer adam --K 100 \
+      --input_vars $input_vars --result_subdir "$subdir"
+    ;;
+  tf)
+    python codit_eval.py --dataset open_ocean --split "$split" \
+      --model_type Transformer --context_encoder_type conv --optimizer adam --K 100 \
+      --input_vars $input_vars --result_subdir "$subdir"
+    ;;
+  lingauss)
+    python lingauss_eval.py --dataset open_ocean --split "$split" \
+      --result_subdir "$subdir"
+    ;;
+  *)
+    echo "Unknown model: $model (expected: gru, tf, lingauss)" >&2
+    exit 1
+    ;;
+esac
+```
 
-python codit_eval.py --dataset open_ocean --split "$split" \
-  --model_type Transformer --context_encoder_type conv --optimizer adam --K 100 \
-  --input_vars $input_vars --result_subdir "$subdir"
+**`runai_scripts/fig4_coastline.sh <model> [split] [subdir]`** — identical
+structure, `--dataset coastline` and
+`input_vars="hycom_current copernicus_current era5_wind bathymetry"`.
 
-python lingauss_eval.py --dataset open_ocean --split "$split" \
-  --result_subdir "$subdir"
+**`runai_scripts/fig4_summarize.sh <dataset> [split] [subdir]`** — runs
+`summarize_fig4.py` for one dataset. Launched separately after the three
+eval jobs for that dataset finish:
 
-python summarize_fig4.py --dataset open_ocean --split "$split" \
+```bash
+#!/bin/bash
+set -euo pipefail
+dataset=$1
+split=${2:-test}
+subdir=${3:-fig4_repro}
+
+source ~/.bashrc
+micromamba activate codit
+cd /mydata/adopt/christian/CoDiT/my_scripts/model_fitting
+
+python summarize_fig4.py --dataset "$dataset" --split "$split" \
   --result_subdir "$subdir"
 ```
 
-**`runai_scripts/fig4_coastline.sh`** — identical structure, `--dataset
-coastline` and `input_vars="hycom_current copernicus_current era5_wind
-bathymetry"`.
-
-Both scripts accept an optional split and subdir positional arg for
-override, defaulting to `test` and `fig4_repro`.
+Total: **6 eval jobs** (parallelizable) + **2 summary jobs** (one per
+dataset, launched after the corresponding evals complete).
 
 ## No-overwrite guarantee
 
