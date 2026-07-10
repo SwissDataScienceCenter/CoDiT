@@ -23,13 +23,23 @@ if __name__ == "__main__":
     parser.add_argument("--split", type=str, default="")
     parser.add_argument("--num_samples", type=int, default=100)
     parser.add_argument("--evaluate_subset", action="store_true", default=False)
+    parser.add_argument(
+        "--result_subdir",
+        type=str,
+        default="",
+        help="Optional subdirectory inserted between --split and the model name in the result path. Default '' preserves the original path.",
+    )
     args = parser.parse_args()
     np.random.seed(0)
 
     if args.dataset == "open_ocean":
         config_path = os.path.join(config_paths.CONFIG_PATH, "open_ocean", args.split)
         result_path = os.path.join(
-            config_paths.RESULT_PATH, "open_ocean", args.split, "linear_gauss"
+            config_paths.RESULT_PATH,
+            "open_ocean",
+            args.split,
+            args.result_subdir,
+            "linear_gauss",
         )
         length = 72
         if not os.path.exists(result_path):
@@ -37,7 +47,11 @@ if __name__ == "__main__":
     elif args.dataset == "coastline":
         config_path = os.path.join(config_paths.CONFIG_PATH, "coastline", args.split)
         result_path = os.path.join(
-            config_paths.RESULT_PATH, "coastline", args.split, "linear_gauss"
+            config_paths.RESULT_PATH,
+            "coastline",
+            args.split,
+            args.result_subdir,
+            "linear_gauss",
         )
         length = 24
         if not os.path.exists(result_path):
