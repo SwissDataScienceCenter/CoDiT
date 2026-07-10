@@ -4,7 +4,18 @@ import os
 from datetime import datetime
 from unittest.mock import patch
 
+import pytest
 import yaml
+
+
+@pytest.fixture(autouse=True)
+def _restore_config_paths():
+    """Reload config_paths after each test so patched env vars don't leak into
+    module globals used by other test files."""
+    yield
+    from codit.data_module import config_paths
+
+    importlib.reload(config_paths)
 
 
 class TestConfigPaths:

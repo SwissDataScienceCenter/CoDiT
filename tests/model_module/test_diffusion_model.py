@@ -89,10 +89,12 @@ def test_predict_deterministic_same_key():
     from codit.data_module import config_funcs
     from codit.data_module.dataset import OceanDataset
 
-    model = CoDiTModel.import_trained_model("codit_GRU_open_ocean")
+    # Use a small coastline patch (single trajectory, ~5 days of context) instead
+    # of a full-year open-ocean patch — cuts NetCDF load from minutes to seconds.
+    model = CoDiTModel.import_trained_model("codit_GRU_coastline")
     config = config_funcs.load_config(
-        "open_ocean_patch_1_year_2021",
-        os.path.join(config_paths.CONFIG_PATH, "open_ocean", "test"),
+        "patch_1031_traj_300234066218730_1",
+        os.path.join(config_paths.CONFIG_PATH, "coastline", "test"),
     )
     dataset = OceanDataset(config, 72, 16, 10000, "linear")
     start_position, start_time, _times, interpolator, _ = dataset[0]
