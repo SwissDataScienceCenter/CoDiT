@@ -35,11 +35,17 @@ dependencies = [
     "wandb",
     "scipy>=1.7.3",
     "torch",
+    "tensorboard",
+    "tqdm",
+    "h5py",
+    "requests",
+    "optax",
+    "orbax-checkpoint",
 ]
 
 [project.optional-dependencies]
 parcels = ["parcels", "zarr"]
-viz = ["streamlit==1.25.0", "tensorboard"]
+viz = ["streamlit==1.25.0"]
 dev = [
     "black",
     "ruff",
