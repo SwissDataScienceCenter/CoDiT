@@ -68,7 +68,47 @@ python my_scripts/model_fitting/lingauss_eval.py \
     --dataset coastline --split test
 ```
 
-### 4. Path configuration
+### 4. Reproduce Table 2 / Figure 4 numbers
+
+Table 2 in the paper reports final-horizon (72 h open_ocean, 24 h coastline)
+median Position Error (PE), Energy Score (ES), and Skill Score (SS) for
+CoDiT-GRU, CoDiT-Transformer, and the WDM (Linear Gaussian) baseline. To
+reproduce these numbers from the shipped checkpoints, use the launcher
+scripts in `runai_scripts/`:
+
+- `fig4_open_ocean.sh <gru|tf|lingauss>` — evaluates one model on open_ocean.
+- `fig4_coastline.sh <gru|tf|lingauss>` — evaluates one model on coastline.
+- `fig4_summarize.sh <dataset>` — aggregates the three models' outputs into
+  `fig4_summary.csv` alongside the published paper values.
+
+Eval outputs are written under `data/results/<dataset>/test/fig4_repro/`,
+so nothing under `data/results/<dataset>/test/` is overwritten.
+
+**Recommended: 6 evals in parallel, then 2 summaries.**
+
+```bash
+# 6 eval jobs (submit in parallel on the cluster)
+runai_scripts/fig4_open_ocean.sh gru
+runai_scripts/fig4_open_ocean.sh tf
+runai_scripts/fig4_open_ocean.sh lingauss
+runai_scripts/fig4_coastline.sh  gru
+runai_scripts/fig4_coastline.sh  tf
+runai_scripts/fig4_coastline.sh  lingauss
+
+# After the three evals for a dataset finish, aggregate:
+runai_scripts/fig4_summarize.sh open_ocean
+runai_scripts/fig4_summarize.sh coastline
+```
+
+`fig4_summarize.sh` prints and writes a comparison table with columns
+`PE_new_km / PE_paper_km / dPE_km` (and analogous for ES/SS) to
+`data/results/<dataset>/test/fig4_repro/fig4_summary.csv`.
+
+To rerun from scratch, delete `data/results/<dataset>/test/fig4_repro/`
+before relaunching — otherwise `codit_eval.py` skips patches whose `.npz`
+files already exist.
+
+### 5. Path configuration
 
 Paths resolve from the `CODIT_DATA_PATH` environment variable. If unset,
 defaults to `<repo_root>/data`.
