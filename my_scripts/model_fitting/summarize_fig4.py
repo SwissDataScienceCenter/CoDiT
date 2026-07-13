@@ -35,19 +35,10 @@ PAPER_TABLE_2 = {
 }
 
 
-def _input_var_str(dataset: str) -> str:
-    if dataset == "open_ocean":
-        return "hycom_current_copernicus_current_era5_wind"
-    if dataset == "coastline":
-        return "hycom_current_copernicus_current_era5_wind_bathymetry"
-    raise ValueError(f"unknown dataset: {dataset!r}")
-
-
 def _model_dir_map(dataset: str) -> dict:
-    ivs = _input_var_str(dataset)
     return {
-        "CoDiT (GRU)": f"codit_GRU_{dataset}_conv_adam_K100_{ivs}",
-        "CoDiT (TF)":  f"codit_Transformer_{dataset}_conv_adam_K100_{ivs}",
+        "CoDiT (GRU)": f"codit_GRU_{dataset}",
+        "CoDiT (TF)":  f"codit_Transformer_{dataset}",
         "WDM":         "linear_gauss",
     }
 

@@ -4,7 +4,7 @@
 # Aggregates evaluation results across models for a given dataset,
 # writing fig4_summary.csv to data/results/<dataset>/<split>/<subdir>/.
 
-set -euo pipefail
+# set -euo pipefail
 
 if [[ $# -lt 1 ]]; then
   echo "usage: $0 <dataset> [split=test] [subdir=fig4_repro]" >&2

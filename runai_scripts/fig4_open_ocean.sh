@@ -6,7 +6,7 @@
 #   data/results/open_ocean/<split>/<subdir>/<model_dir>/
 # so existing data/results/open_ocean/<split>/<model_dir>/ is untouched.
 
-set -euo pipefail
+# set -euo pipefail
 
 if [[ $# -lt 1 ]]; then
   echo "usage: $0 <gru|tf|lingauss> [split=test] [subdir=fig4_repro]" >&2
@@ -27,12 +27,14 @@ case "$model" in
   gru)
     python codit_eval.py --dataset open_ocean --split "$split" \
       --model_type GRU --context_encoder_type conv --optimizer adam --K 100 \
-      --input_vars $input_vars --result_subdir "$subdir"
+      --input_vars $input_vars --result_subdir "$subdir" \
+      --model_name codit_GRU_open_ocean
     ;;
   tf)
     python codit_eval.py --dataset open_ocean --split "$split" \
       --model_type Transformer --context_encoder_type conv --optimizer adam --K 100 \
-      --input_vars $input_vars --result_subdir "$subdir"
+      --input_vars $input_vars --result_subdir "$subdir" \
+      --model_name codit_Transformer_open_ocean
     ;;
   lingauss)
     python lingauss_eval.py --dataset open_ocean --split "$split" \

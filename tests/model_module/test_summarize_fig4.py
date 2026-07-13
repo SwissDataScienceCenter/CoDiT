@@ -57,8 +57,8 @@ def _make_synthetic_patch(model_dir: Path, n_traj: int = 2, n_samples: int = 3, 
     (
         "open_ocean",
         [
-            "codit_GRU_open_ocean_conv_adam_K100_hycom_current_copernicus_current_era5_wind",
-            "codit_Transformer_open_ocean_conv_adam_K100_hycom_current_copernicus_current_era5_wind",
+            "codit_GRU_open_ocean",
+            "codit_Transformer_open_ocean",
             "linear_gauss",
         ],
     ),
