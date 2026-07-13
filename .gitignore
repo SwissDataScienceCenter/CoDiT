@@ -7,6 +7,7 @@ wip/
 my_scripts/*
 !my_scripts/model_fitting/
 runai_scripts/*
+!runai_scripts/fig4_*.sh
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
