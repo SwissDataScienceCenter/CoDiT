@@ -194,9 +194,6 @@ Key arguments:
 
 The trained model is saved to `data/trained_models/ckpts/<model_name>/`.
 
-**Expected resources:** ~2 h on a single GPU (NVIDIA A100) for 100 epochs on `open_ocean`.
-CPU training is supported but will be ~10× slower.
-
 ### Linear Gaussian baseline
 
 ```bash
@@ -206,8 +203,6 @@ python my_scripts/model_fitting/lingauss_train.py \
     --num_batches_per_epoch 100 \
     --batch_size 128
 ```
-
-Trains in under 10 minutes on CPU.
 
 ### WandB experiment tracking
 
