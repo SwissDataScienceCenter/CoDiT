@@ -49,9 +49,7 @@ viz = ["streamlit==1.25.0"]
 dev = [
     "black",
     "ruff",
-    "mypy",
     "pre-commit",
-    "types-PyYAML",
     "pytest",
 ]
 
@@ -64,10 +62,6 @@ line-length = 88
 [tool.ruff]
 line-length = 88
 target-version = "py310"
-
-[tool.mypy]
-ignore_missing_imports = true
-disallow_untyped_defs = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

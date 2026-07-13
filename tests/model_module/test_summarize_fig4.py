@@ -16,7 +16,7 @@ import numpy as np
 import pytest
 
 
-REPO_ROOT = Path("/mydata/adopt/christian/CoDiT")
+REPO_ROOT = Path(__file__).resolve().parents[2]
 SUMMARIZE_SCRIPT = REPO_ROOT / "my_scripts" / "model_fitting" / "summarize_fig4.py"
 
 
