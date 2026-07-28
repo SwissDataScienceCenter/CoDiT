@@ -1,6 +1,7 @@
 # Custom
 *.ini
-data/datasets/*
+data/datasets
+data/results
 data/configs/*
 data/bathymetry/*
 wip/
