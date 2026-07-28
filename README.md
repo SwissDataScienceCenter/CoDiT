@@ -47,9 +47,6 @@ python scripts/download_data.py --dataset open_ocean
 python scripts/download_data.py --dataset coastline
 ```
 
-Trained model checkpoints are already included in the repository under
-`data/trained_models/`.
-
 ### 3. Reproduce paper results
 
 ```bash
@@ -71,74 +68,13 @@ python my_scripts/model_fitting/lingauss_eval.py \
     --dataset coastline --split test
 ```
 
-### 4. Reproduce Table 2 / Figure 4 numbers
-
-Table 2 in the paper reports final-horizon (72 h open_ocean, 24 h coastline)
-median Position Error (PE), Energy Score (ES), and Skill Score (SS) for
-CoDiT-GRU, CoDiT-Transformer, and the WDM (Linear Gaussian) baseline. To
-reproduce these numbers from the shipped checkpoints, use the launcher
-scripts in `runai_scripts/`:
-
-- `fig4_open_ocean.sh <gru|tf|lingauss>` — evaluates one model on open_ocean.
-- `fig4_coastline.sh <gru|tf|lingauss>` — evaluates one model on coastline.
-- `fig4_summarize.sh <dataset>` — aggregates the three models' outputs into
-  `fig4_summary.csv` alongside the published paper values.
-
-Eval outputs are written under `data/results/<dataset>/test/fig4_repro/`,
-so nothing under `data/results/<dataset>/test/` is overwritten.
-
-**Recommended: 6 evals in parallel, then 2 summaries.**
-
-```bash
-# 6 eval jobs (submit in parallel on the cluster)
-runai_scripts/fig4_open_ocean.sh gru
-runai_scripts/fig4_open_ocean.sh tf
-runai_scripts/fig4_open_ocean.sh lingauss
-runai_scripts/fig4_coastline.sh  gru
-runai_scripts/fig4_coastline.sh  tf
-runai_scripts/fig4_coastline.sh  lingauss
-
-# After the three evals for a dataset finish, aggregate:
-runai_scripts/fig4_summarize.sh open_ocean
-runai_scripts/fig4_summarize.sh coastline
-```
-
-`fig4_summarize.sh` prints and writes a comparison table with columns
-`PE_new_km / PE_paper_km / dPE_km` (and analogous for ES/SS) to
-`data/results/<dataset>/test/fig4_repro/fig4_summary.csv`.
-
-To rerun from scratch, delete `data/results/<dataset>/test/fig4_repro/`
-before relaunching — otherwise `codit_eval.py` skips patches whose `.npz`
-files already exist.
-
-### 5. Path configuration
+### 4. Path configuration
 
 Paths resolve from the `CODIT_DATA_PATH` environment variable. If unset,
 defaults to `<repo_root>/data`.
 
 ```bash
 export CODIT_DATA_PATH=/path/to/your/data
-```
-
-For API credentials (only needed for downloading new ocean data, not for
-reproducing results):
-
-```bash
-export CODIT_CREDENTIALS_PATH=/path/to/config.ini
-```
-
-The `config.ini` should contain Copernicus CDS and Marine Service credentials:
-
-```ini
-[copernicus]
-user = <cds-email>
-password = <cds-password>
-url = https://cds.climate.copernicus.eu/api
-key = <cds-key>
-
-[copernicusmarine]
-username = <username>
-password = <password>
 ```
 
 ## Project Structure
@@ -216,14 +152,6 @@ Before training, authenticate:
 wandb login
 ```
 
-Run names follow the convention:
-
-```
-codit_{model_type}_{dataset}_{context_encoder}_{optimizer}_K{K}_{vars}[_{run_name}]
-```
-
-Example: `codit_GRU_open_ocean_conv_adam_K100_hycom_current_copernicus_current_era5_wind_bathymetry`
-
 To disable WandB logging entirely:
 
 ```bash
@@ -243,11 +171,3 @@ The datasets are archived on Zenodo:
 
 Global Drifter Program, HYCOM, Copernicus Marine Service, CDS, GEBCO,
 Swiss Data Science Center (SDSC)
-
-## Oceancleanup dataset (private)
-
-The oceancleanup application dataset is not publicly distributed. It uses data provided
-by [The Ocean Cleanup](https://theoceancleanup.com/) under a separate data agreement.
-
-To use it, place the dataset under `$CODIT_DATA_PATH/datasets/oceancleanup/` following
-the same directory structure as the public datasets. Evaluation scripts are in `oceancleanup/`.
