@@ -117,3 +117,26 @@ class TestLoadConfig:
         assert "era5_file" in result
         assert "trajectories_file" in result
         assert result["hycom_file"].startswith(result["dataset_path"])
+
+
+class TestSaveConfig:
+    """save_config must not persist the stale dataset_path field."""
+
+    def test_save_config_omits_dataset_path(self, tmp_path):
+        from codit.data_module.config_funcs import save_config
+
+        config = {
+            "name": "patch_0_year_2017",
+            "type": "region_based",
+            "latitudes": [-5.0, 5.0],
+            "longitudes": [-180.0, -170.0],
+            "start_date": "2017-01-01",
+            "end_date": "2017-12-31",
+            "context_delta": 0.1,
+        }
+        save_config(config, str(tmp_path), "/irrelevant/path")
+        with open(tmp_path / "patch_0_year_2017.yml") as f:
+            saved = yaml.safe_load(f)
+        assert "dataset_path" not in saved
+        assert saved["name"] == "patch_0_year_2017"
+        assert saved["type"] == "region_based"
