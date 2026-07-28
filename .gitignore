@@ -218,6 +218,13 @@ marimo/_lsp/
 __marimo__/
 
 plans/*
-docs/_build/
+docs/*
 .claude/*
 .vscode/*
+
+# Local-only notebooks and private oceancleanup work (not shipped)
+notebooks/*
+!notebooks/get_started.ipynb
+!notebooks/making_predictions.ipynb
+
+oceancleanup/
