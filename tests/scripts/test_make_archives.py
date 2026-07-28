@@ -8,6 +8,7 @@ import yaml
 sys.path.insert(0, str(Path(__file__).parents[2] / "scripts"))
 from make_archives import (  # noqa: E402
     make_config_archive,
+    make_data_archive,
     strip_dataset_path,
     strip_inplace,
 )
@@ -54,6 +55,34 @@ def test_make_config_archive_strips_path(tmp_path):
         loaded = yaml.safe_load(tar.extractfile(member).read())
     assert "dataset_path" not in loaded
     assert loaded["name"] == "patch_0"
+
+
+def test_make_data_archive_excludes_intermediates(tmp_path):
+    """Data archive must not contain hycom/tmp, .grib, .idx, or days_not_loaded.json."""
+    src = tmp_path / "src"
+    patch = src / "datasets" / "ds" / "train" / "patch_0"
+    (patch / "hycom" / "tmp").mkdir(parents=True)
+    (patch / "hycom" / "tmp" / "granule.nc4").write_bytes(b"scratch")
+    (patch / "hycom" / "days_not_loaded.json").write_text("[]")
+    (patch / "hycom" / "hycom_time_final_d0.nc4").write_bytes(b"real")
+    (patch / "era5").mkdir()
+    (patch / "era5" / "era5_time.grib").write_bytes(b"src")
+    (patch / "era5" / "era5_time.grib.abc.idx").write_bytes(b"idx")
+    (patch / "era5" / "era5_time.nc").write_bytes(b"nc")
+
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    make_data_archive("ds", "train", str(src), str(out_dir))
+
+    with tarfile.open(out_dir / "ds_train.tar.gz") as tar:
+        names = tar.getnames()
+    assert not any("hycom/tmp" in n for n in names), names
+    assert not any(n.endswith(".grib") for n in names), names
+    assert not any(n.endswith(".idx") for n in names), names
+    assert not any(n.endswith("days_not_loaded.json") for n in names), names
+    # Verify the real files are still present.
+    assert any(n.endswith("hycom_time_final_d0.nc4") for n in names), names
+    assert any(n.endswith("era5_time.nc") for n in names), names
 
 
 def test_make_config_archive_internal_paths(tmp_path):

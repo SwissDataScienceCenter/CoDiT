@@ -22,6 +22,16 @@ import yaml
 DATASETS = ["open_ocean", "coastline"]
 SPLITS = ["train", "val", "test"]
 
+# Patterns to exclude from data archives. These are download-time
+# intermediates and bookkeeping — runtime code (see config_funcs.complete_config)
+# only opens the merged copernicus/era5/hycom/trajectories NetCDF files.
+DATA_EXCLUDES = [
+    "tmp",  # hycom/tmp/*.nc4 daily granules pre-merge
+    "*.grib",  # era5 grib sources (converted to .nc for runtime)
+    "*.idx",  # era5 grib indexes
+    "days_not_loaded.json",  # hycom download bookkeeping
+]
+
 
 def strip_dataset_path(yml_bytes: bytes) -> bytes:
     """Return YAML bytes with dataset_path field removed."""
@@ -51,12 +61,19 @@ def make_data_archive(dataset: str, split: str, src: str, out_dir: str) -> None:
 
     Archive paths are relative to the split directory so that
     tar.extractall(dest) produces dest/{patch_name}/... — matching
-    what download_data.py expects.
+    what download_data.py expects. Download-time intermediates
+    (see DATA_EXCLUDES) are excluded.
     """
     src_dir = os.path.join(src, "datasets", dataset, split)
     out = os.path.join(out_dir, f"{dataset}_{split}.tar.gz")
+    exclude_args: list[str] = []
+    for pat in DATA_EXCLUDES:
+        exclude_args.extend(["--exclude", pat])
     print(f"  Creating {out} ...")
-    subprocess.run(["tar", "-czf", out, "-C", src_dir, "."], check=True)
+    subprocess.run(
+        ["tar", "-czf", out, *exclude_args, "-C", src_dir, "."],
+        check=True,
+    )
     size_gb = os.path.getsize(out) / 1024**3
     print(f"  -> {size_gb:.2f} GB")
 
