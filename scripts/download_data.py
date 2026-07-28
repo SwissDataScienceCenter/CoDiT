@@ -15,28 +15,30 @@ import sys
 import tarfile
 import urllib.request
 
-# --------------------------------------------------------------------------
-# TODO: Replace placeholder URLs with actual Zenodo URLs once data is uploaded.
-# Each tarball, when extracted, must produce the directory structure expected by
+# Each tarball, when extracted, produces the directory structure expected by
 # config_funcs.load_config:
 #   datasets/{dataset}/{split}/{patch_name}/copernicus/
 #   datasets/{dataset}/{split}/{patch_name}/era5/
 #   datasets/{dataset}/{split}/{patch_name}/hycom/
 #   datasets/{dataset}/{split}/{patch_name}/trajectories/
 #   configs/{dataset}/{split}/{patch_name}.yml
-# --------------------------------------------------------------------------
+#
+# Zenodo record: https://doi.org/10.5281/zenodo.21644091
+ZENODO_RECORD = "21644091"
+_BASE = f"https://zenodo.org/records/{ZENODO_RECORD}/files"
+
 DATASET_URLS: dict[str, dict[str, str]] = {
     "open_ocean": {
-        "train": "https://zenodo.org/record/XXXXXXX/files/open_ocean_train.tar.gz",
-        "val": "https://zenodo.org/record/XXXXXXX/files/open_ocean_val.tar.gz",
-        "test": "https://zenodo.org/record/XXXXXXX/files/open_ocean_test.tar.gz",
-        "configs": "https://zenodo.org/record/XXXXXXX/files/open_ocean_configs.tar.gz",
+        "train": f"{_BASE}/open_ocean_train.tar.gz",
+        "val": f"{_BASE}/open_ocean_val.tar.gz",
+        "test": f"{_BASE}/open_ocean_test.tar.gz",
+        "configs": f"{_BASE}/open_ocean_configs.tar.gz",
     },
     "coastline": {
-        "train": "https://zenodo.org/record/XXXXXXX/files/coastline_train.tar.gz",
-        "val": "https://zenodo.org/record/XXXXXXX/files/coastline_val.tar.gz",
-        "test": "https://zenodo.org/record/XXXXXXX/files/coastline_test.tar.gz",
-        "configs": "https://zenodo.org/record/XXXXXXX/files/coastline_configs.tar.gz",
+        "train": f"{_BASE}/coastline_train.tar.gz",
+        "val": f"{_BASE}/coastline_val.tar.gz",
+        "test": f"{_BASE}/coastline_test.tar.gz",
+        "configs": f"{_BASE}/coastline_configs.tar.gz",
     },
 }
 
@@ -63,12 +65,6 @@ def download_dataset(dataset: str, data_path: str) -> None:
     print(f"\n=== Downloading {dataset} ===")
     urls = DATASET_URLS[dataset]
     for split, url in urls.items():
-        if "XXXXXXX" in url:
-            raise RuntimeError(
-                f"Dataset URLs for '{dataset}' are not yet available. "
-                "They will be populated after Zenodo upload. "
-                "Bathymetry can be downloaded now with --bathymetry."
-            )
         if split == "configs":
             dest_dir = os.path.join(data_path, "configs")
         else:
