@@ -32,8 +32,11 @@ pip install --upgrade "jax[cuda12]"
 
 ### 2. Download data
 
+The `open_ocean` and `coastline` datasets are hosted on Zenodo:
+[10.5281/zenodo.21644091](https://doi.org/10.5281/zenodo.21644091).
+
 ```bash
-# Download both datasets and bathymetry (~101 GB total)
+# Download both datasets and bathymetry (~35 GB compressed)
 python scripts/download_data.py --dataset all --bathymetry
 ```
 
@@ -232,6 +235,9 @@ export WANDB_MODE=disabled
 If you find this helpful, please cite:
 
 > [Citation to be added upon publication]
+
+The datasets are archived on Zenodo:
+[10.5281/zenodo.21644091](https://doi.org/10.5281/zenodo.21644091).
 
 ## Acknowledgements
 
