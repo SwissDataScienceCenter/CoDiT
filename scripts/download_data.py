@@ -10,10 +10,10 @@ Usage:
 
 import argparse
 import os
-import subprocess
 import sys
 import tarfile
 import urllib.request
+import zipfile
 
 # Each tarball, when extracted, produces the directory structure expected by
 # config_funcs.load_config:
@@ -79,11 +79,14 @@ def download_dataset(dataset: str, data_path: str) -> None:
 def download_bathymetry(data_path: str) -> None:
     """Download and extract GEBCO bathymetry data."""
     print("\n=== Downloading bathymetry ===")
-    dest_dir = os.path.join(data_path, "bathymetry")
-    os.makedirs(dest_dir, exist_ok=True)
+    os.makedirs(data_path, exist_ok=True)
     zippath = os.path.join(data_path, "bathymetry.zip")
     download_file(BATHYMETRY_URL, zippath)
-    subprocess.run(["unzip", "-o", zippath, "-d", dest_dir], check=True)
+    # Zip has a top-level `bathymetry/` folder — extract into data_path so
+    # the final layout is data_path/bathymetry/GEBCO_.../*.nc.
+    print(f"  Extracting {os.path.basename(zippath)} -> {data_path}")
+    with zipfile.ZipFile(zippath) as zf:
+        zf.extractall(path=data_path)
     os.remove(zippath)
     print("=== bathymetry complete ===")
 
