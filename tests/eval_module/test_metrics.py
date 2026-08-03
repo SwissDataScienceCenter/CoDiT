@@ -21,6 +21,7 @@ API contract
 
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 from codit.eval_module.metrics import (
     get_energy_score,
@@ -395,3 +396,129 @@ class TestGetMetrics4D:
         pred = _moving_coords_4d(n=n, s=s, t=t)
         result = get_metrics(true, pred)
         assert result["energy_score"].shape == (n, t)
+
+
+# ---------------------------------------------------------------------------
+# Reference-value and edge-case tests
+# ---------------------------------------------------------------------------
+
+
+class TestReferenceValues:
+    """Sanity-check metric outputs against hand-computed reference values."""
+
+    def test_haversine_error_one_degree_latitude_is_111km(self):
+        """One degree of latitude on a sphere of R=6_371_000 m is ~111.195 km."""
+        true = jnp.array([[[0.0, 0.0]]])  # (1, 1, 2)
+        pred = jnp.array([[[1.0, 0.0]]])  # (1, 1, 2) — shifted 1 deg north
+        error = get_haversine_error(true, pred)
+        assert error.shape == (1, 1)
+        expected_m = np.pi / 180.0 * 6_371_000.0  # ~111_195 m
+        np.testing.assert_allclose(float(error[0, 0]), expected_m, rtol=1e-5)
+
+    def test_haversine_error_zero_shift(self):
+        """Zero displacement gives exactly zero error (no floating-point drift > 1 um)."""
+        true = jnp.array([[[10.0, 20.0], [10.1, 20.1]]])
+        pred = true[:, None, :, :]  # (1, 1, T, 2)
+        error = get_haversine_error(true, pred)
+        assert float(jnp.max(jnp.abs(error))) < 1e-6
+
+    def test_skill_score_perfect_forecast_equals_one(self):
+        """When the forecast trajectory matches truth exactly, skill == 1."""
+        n, t = 2, 5
+        true_with_start = _moving_coords_with_start(n=n, t=t)  # (N, T+1, 2)
+        pred = true_with_start[:, None, 1:, :]  # perfect single-sample forecast
+        score = get_skill_score(true_with_start, pred, threshold=1.0)
+        np.testing.assert_allclose(np.array(score), np.ones((n, t)), atol=1e-4)
+
+    def test_energy_score_reduces_to_haversine_for_single_sample(self):
+        """With S=1, energy score = expected error - 0.5 * self-distance = haversine.
+
+        The cross-distance term is d(s, s) = 0 when S=1, so the score equals
+        the pointwise haversine distance between the sample and the truth.
+        """
+        n, t = 2, 4
+        true = _moving_coords(n=n, t=t)
+        pred_3d = true + 0.01  # small shift
+        pred_4d = pred_3d[:, None, :, :]  # (N, 1, T, 2)
+        energy = get_energy_score(true, pred_4d)
+        # Reference: pointwise haversine between pred and true
+        from jax import vmap as _vmap
+        from codit.data_module import data_transform as _dt
+
+        ref = _vmap(_vmap(_dt.haversine_distance))(true, pred_3d)
+        np.testing.assert_allclose(np.array(energy), np.array(ref), rtol=1e-5)
+
+
+class TestInvalidAggregation:
+    """Both get_haversine_error and get_skill_score reject unknown aggregation."""
+
+    def test_haversine_error_rejects_bad_aggregation(self):
+        coords = _moving_coords()
+        with pytest.raises(ValueError, match="Unknown aggregation"):
+            get_haversine_error(coords, coords, aggregation="mode")
+
+    def test_skill_score_rejects_bad_aggregation(self):
+        true = _moving_coords_with_start()
+        pred = _moving_coords()
+        with pytest.raises(ValueError, match="Unknown aggregation"):
+            get_skill_score(true, pred, aggregation="mode")
+
+
+class TestMeanAggregation:
+    """Mean aggregation path is a supported alternative to median."""
+
+    def test_haversine_error_mean_agrees_with_reference(self):
+        n, s, t = 2, 4, 5
+        rng = np.random.default_rng(0)
+        true = _moving_coords(n=n, t=t)
+        pred = jnp.array(
+            np.tile(np.array(true)[:, None], (1, s, 1, 1))
+            + rng.normal(scale=0.05, size=(n, s, t, 2))
+        )
+        error = get_haversine_error(true, pred, aggregation="mean")
+        # Reference: compute mean over S, then haversine to true
+        from jax import vmap as _vmap
+        from codit.data_module import data_transform as _dt
+
+        aggr = np.nanmean(np.array(pred), axis=1)  # (N, T, 2)
+        ref = _vmap(_vmap(_dt.haversine_distance))(true, jnp.array(aggr))
+        np.testing.assert_allclose(np.array(error), np.array(ref), rtol=1e-5)
+
+
+class TestSkillScoreThreshold:
+    """Threshold parameter linearly scales the (1 - c/threshold) core."""
+
+    def test_higher_threshold_gives_higher_or_equal_skill(self):
+        """Doubling the threshold cannot decrease the (non-clipped) skill score."""
+        n, t = 3, 6
+        true = _moving_coords_with_start(n=n, t=t)
+        pred = _moving_coords(n=n, t=t) + 0.02  # moderate forecast error
+        low = get_skill_score(true, pred, threshold=1.0)
+        high = get_skill_score(true, pred, threshold=2.0)
+        # Both are clipped at 0 from below, so high >= low pointwise
+        assert bool(jnp.all(high >= low - 1e-6))
+
+    def test_skill_score_clipped_at_zero(self):
+        """Very bad forecast (huge shift) is clipped at 0, not negative."""
+        n, t = 2, 5
+        true = _moving_coords_with_start(n=n, t=t)
+        pred = _moving_coords(n=n, t=t) + 50.0  # far away
+        score = get_skill_score(true, pred, threshold=1.0)
+        assert bool(jnp.all(score >= 0.0))
+        assert bool(jnp.all(score < 1e-6))  # essentially zero
+
+
+class TestNanHandling:
+    """Energy score uses nansum-style aggregation over samples."""
+
+    def test_energy_score_ignores_nan_samples(self):
+        """A single NaN sample should not blow up the score; result stays finite."""
+        n, s, t = 2, 4, 3
+        base = np.array(_moving_coords(n=n, t=t))
+        pred = np.tile(base[:, None], (1, s, 1, 1)) + 0.01
+        pred[:, 0, :, :] = np.nan  # invalidate one sample per trajectory
+        score = get_energy_score(jnp.array(base), jnp.array(pred))
+        assert score.shape == (n, t)
+        assert not np.any(np.isnan(np.array(score))), (
+            "NaN samples should be filtered, not propagate through the score"
+        )
