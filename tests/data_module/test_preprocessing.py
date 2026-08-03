@@ -140,3 +140,76 @@ def test_preprocess_configs_writes_expected_h5(two_patch_fixture):
         assert context.shape[4] == 8
         # both patches contributed at least one snippet each
         assert trajectories.shape[0] >= 2
+
+
+def test_cli_matches_helper(two_patch_fixture, monkeypatch):
+    """`scripts/precompute_trainset.py --dataset unit --split train` produces a
+    merged h5 with the same shape as calling the helper directly."""
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    configs, tmp_path = two_patch_fixture
+    repo_root = Path(__file__).resolve().parents[2]
+    cli = repo_root / "scripts" / "precompute_trainset.py"
+
+    # The CLI cannot inherit our monkeypatched context_functions.load_data.
+    # Provide a tiny sitecustomize.py on PYTHONPATH that installs the same
+    # monkeypatch at interpreter start.
+    shim_dir = tmp_path / "shim"
+    shim_dir.mkdir()
+    (shim_dir / "sitecustomize.py").write_text(
+        "from codit.data_module import context_functions\n"
+        "import xarray as xr, numpy as np\n"
+        "from datetime import datetime, timedelta\n"
+        "def _fake_load(config, latitudes=None, longitudes=None):\n"
+        "    start = config['start_date']\n"
+        "    length = int((config['end_date'] - start).total_seconds() // 3600)\n"
+        "    times = np.array([start + timedelta(hours=h) for h in range(length + 3)], dtype='datetime64[ns]')\n"
+        "    lat = (config['latitudes'][0] + config['latitudes'][1]) / 2\n"
+        "    lon = (config['longitudes'][0] + config['longitudes'][1]) / 2\n"
+        "    lats = np.linspace(lat - 0.5, lat + 0.5, 8, dtype=np.float32)\n"
+        "    lons = np.linspace(lon - 0.5, lon + 0.5, 8, dtype=np.float32)\n"
+        "    shape = (len(times), len(lats), len(lons))\n"
+        "    dims = ('time', 'latitude', 'longitude')\n"
+        "    ones = np.ones(shape, dtype=np.float32) * 0.1\n"
+        "    bathy = np.full(shape, -1000.0, dtype=np.float32)\n"
+        "    return xr.Dataset({\n"
+        "        'hycom_u': (dims, ones), 'hycom_v': (dims, ones),\n"
+        "        'copernicus_u': (dims, ones), 'copernicus_v': (dims, ones),\n"
+        "        'era5_u': (dims, ones), 'era5_v': (dims, ones),\n"
+        "        'bathymetry': (dims, bathy),\n"
+        "    }, coords={'time': times, 'latitude': lats, 'longitude': lons})\n"
+        "context_functions.load_data = _fake_load\n"
+    )
+
+    env = os.environ.copy()
+    env["CODIT_DATA_PATH"] = str(tmp_path)
+    env["PYTHONPATH"] = str(shim_dir) + os.pathsep + env.get("PYTHONPATH", "")
+
+    # Clear any cached intermediates so the CLI does real work.
+    for cfg in configs:
+        cache = os.path.join(cfg["dataset_path"], "training_data_6h.h5")
+        if os.path.exists(cache):
+            os.remove(cache)
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(cli),
+            "--dataset", "unit",
+            "--split", "train",
+            "--length", "6",
+            "--num_grid_points", "4",
+            "--delta_metres", "1000",
+        ],
+        env=env,
+        check=True,
+    )
+
+    expected_out = tmp_path / "datasets" / "unit" / "train" / "processed" / "training_data_6h.h5"
+    assert expected_out.exists(), f"CLI did not produce {expected_out}"
+
+    with h5py.File(expected_out, "r") as f:
+        assert f["trajectories"].shape[1] == 7
+        assert f["context"].shape[4] == 8
