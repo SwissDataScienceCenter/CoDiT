@@ -3,7 +3,6 @@ import sys
 
 import numpy as np
 from matplotlib.lines import Line2D
-from matplotlib.patches import Rectangle
 from matplotlib import pyplot as plt
 from scipy.stats import gaussian_kde
 from tqdm import tqdm
@@ -188,7 +187,18 @@ def plot_pit_histograms(
                 bins=10,
                 range=(0, 1),
                 density=True,
-                alpha=0.7,
+                color=color,
+                alpha=0.3,
+                edgecolor="none",
+            )
+            ax.hist(
+                pit_lat[valid],
+                bins=10,
+                range=(0, 1),
+                density=True,
+                histtype="step",
+                linestyle="-",
+                linewidth=1.8,
                 color=color,
             )
             ax.hist(
@@ -196,10 +206,21 @@ def plot_pit_histograms(
                 bins=10,
                 range=(0, 1),
                 density=True,
-                alpha=0.4,
-                color="gray",
+                color=color,
+                alpha=0.3,
+                edgecolor="none",
             )
-            ax.axhline(1.0, color="k", linestyle="--", linewidth=1)
+            ax.hist(
+                pit_lon[valid],
+                bins=10,
+                range=(0, 1),
+                density=True,
+                histtype="step",
+                linestyle="--",
+                linewidth=1.8,
+                color=color,
+            )
+            ax.axhline(1.0, color="k", linestyle=":", linewidth=1)
             ax.set_xlim(0, 1)
 
             if j == 0:
@@ -207,15 +228,15 @@ def plot_pit_histograms(
             if i == 0:
                 ax.set_ylabel(f"{horizon}h\nDensity")
             if j == n_rows - 1:
-                ax.set_xlabel("PIT")
+                ax.set_xlabel("PIT value")
 
     title = "Open ocean" if dataset == "open_ocean" else "Coastal"
     fig.suptitle(f"PIT Histograms ({title})", y=1.01)
 
     legend_handles = [
-        Rectangle((0, 0), 1, 1, fc="k", alpha=0.7),
-        Rectangle((0, 0), 1, 1, fc="gray", alpha=0.4),
-        Line2D([0], [0], color="k", linestyle="--"),
+        Line2D([0], [0], color="k", linestyle="-", linewidth=1.8),
+        Line2D([0], [0], color="k", linestyle="--", linewidth=1.8),
+        Line2D([0], [0], color="k", linestyle=":", linewidth=1),
     ]
     fig.legend(legend_handles, ["Lat", "Lon", "Uniform"], loc="upper right", frameon=True)
 
