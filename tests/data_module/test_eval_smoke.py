@@ -2,12 +2,12 @@
 
 
 def test_lingauss_eval_saves_distances_not_distance():
-    """lingauss_eval.py must save 'distances' (concatenated), not 'distance' (last sample)."""
+    """lingauss_eval.py must save the concatenated distances array under a matching 'distances' key."""
     with open("my_scripts/model_fitting/lingauss_eval.py") as f:
         source = f.read()
 
-    # The jnp.savez call must use distance=distances
-    assert "distance=distances," in source
+    # The jnp.savez call must use distances=distances (key matches value)
+    assert "distances=distances," in source
 
 
 def test_lingauss_eval_assigns_import_result():

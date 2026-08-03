@@ -386,16 +386,6 @@ class AutoregressiveModel(BaseTrajectoryModel):
             start = trajectory[:, 0]
         return (trajectory - start) / self.std + start
 
-    def fit(
-        self,
-        train_dataloader: OceanTrainingDataset,
-        val_dataloader: OceanTrainingDataset,
-        train_params: Optional[dict] = None,
-    ) -> "AutoregressiveModel":
-        if train_params is None:
-            train_params = {}
-        return self._fit(train_dataloader, val_dataloader, train_params)
-
     def _fit(
         self,
         train_dataset: OceanTrainingDataset,
