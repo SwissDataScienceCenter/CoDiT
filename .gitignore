@@ -9,6 +9,8 @@ my_scripts/*
 !my_scripts/model_fitting/
 runai_scripts/*
 !runai_scripts/fig4_*.sh
+!runai_scripts/ddpm_train_eval_configs.sh
+!runai_scripts/ddpm_eval_configs.sh
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
