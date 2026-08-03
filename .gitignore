@@ -230,5 +230,6 @@ docs/*
 notebooks/*
 !notebooks/get_started.ipynb
 !notebooks/making_predictions.ipynb
+!notebooks/01_train_quickstart.ipynb
 
 oceancleanup/
