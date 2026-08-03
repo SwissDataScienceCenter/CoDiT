@@ -42,18 +42,19 @@ if __name__ == "__main__":
         help="Optional run name for logging and saving results",
     )
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument(
+        "--prediction_length",
+        type=int,
+        default=72,
+        help="Trajectory horizon in hours. Use 72 for open_ocean, 24 for coastline.",
+    )
     args = parser.parse_args()
 
     np.random.seed(args.seed)
     key = jax.random.PRNGKey(args.seed)
 
     print("Loading dataset")
-    if args.dataset == "open_ocean":
-        length = 72
-    elif args.dataset == "coastline":
-        length = 24
-    else:
-        raise ValueError("Dataset not found")
+    length = args.prediction_length
     dataset = OceanTrainingDataset.from_disk(
         os.path.join(
             config_paths.DATA_PATH, "datasets", args.dataset, "datasets", "processed"
