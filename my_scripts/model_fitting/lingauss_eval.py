@@ -101,7 +101,7 @@ if __name__ == "__main__":
             continue
         jnp.savez(
             os.path.join(result_path, f"{data_name}_result.npz"),
-            distance=distances,
+            distances=distances,
             pred_coords=pred_coords,
             true_coords=true_coords,
         )

@@ -166,7 +166,7 @@ if __name__ == "__main__":
         true_coords = jnp.concatenate(true_coords, axis=0)
         jnp.savez(
             result_file,
-            distance=distances,
+            distances=distances,
             pred_coords=pred_coords,
             true_coords=true_coords,
         )
