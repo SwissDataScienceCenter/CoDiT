@@ -158,6 +158,25 @@ To disable WandB logging entirely:
 export WANDB_MODE=disabled
 ```
 
+## Train on your own region
+
+CoDiT supports four data sources: **HYCOM currents, Copernicus/GLORYS currents,
+ERA5 winds, and GEBCO bathymetry**. Users needing other context features (e.g.
+sea-surface temperature, salinity) must adapt code — see the last section of
+[`docs/data_format.md`](docs/data_format.md).
+
+Two notebooks walk through the workflow:
+
+- [`notebooks/01_train_quickstart.ipynb`](notebooks/01_train_quickstart.ipynb) — trains a
+  small CoDiT-GRU on a subset of the shipped `open_ocean` data (≈10 min on CPU).
+  Start here if you want to see the training loop end-to-end.
+- [`notebooks/02_prepare_your_own_region.ipynb`](notebooks/02_prepare_your_own_region.ipynb) —
+  full pipeline for a new region: pick lat/lon + date range, download the four
+  sources, preprocess into a merged h5, train, evaluate.
+
+The processed-data schema and the 8-channel context layout are documented in
+[`docs/data_format.md`](docs/data_format.md).
+
 ## Cite
 
 If you find this helpful, please cite:
