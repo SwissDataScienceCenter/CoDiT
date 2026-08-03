@@ -222,6 +222,7 @@ __marimo__/
 
 plans/*
 docs/*
+!docs/data_format.md
 .claude/*
 .vscode/*
 
