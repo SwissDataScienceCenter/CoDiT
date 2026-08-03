@@ -233,7 +233,26 @@ class CoDiTModel(BaseTrajectoryModel):
     """
 
     def __init__(self, name: str, params: dict) -> None:
+        """Initialise a CoDiT diffusion model.
 
+        See the class docstring for the full list of supported ``params`` keys.
+        Unset keys fall back to the internal defaults; ``prediction_length`` and
+        ``vars`` are the only keys the caller is expected to always provide.
+
+        Args:
+            name: Unique model identifier; also the checkpoint subdirectory name
+                under ``config_paths.MODEL_PATH/ckpts/``.
+            params: Hyperparameter dictionary. See class docstring for details.
+
+        Attributes set:
+            type (str): Always ``"diffusion"``.
+            model (nn.Module): Flax denoiser (GRU or Transformer).
+            noise_model (WalkNoiseModel): Brownian noise process.
+            schedule_dict (dict): Precomputed linear beta schedule for K steps.
+            ckpt_dir (str): Absolute path to the model's checkpoint directory.
+            nn_params: Set to ``None`` at construction; populated by ``fit`` or
+                ``import_trained_model``.
+        """
         self.type = "diffusion"
 
         default_params = {

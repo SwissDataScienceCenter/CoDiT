@@ -122,6 +122,33 @@ def load_checkpoint(model: nnx.Module, ckpt_dir: str) -> nnx.Module:
 
 
 class ConvNetModel(BaseTrajectoryModel):
+    """Convolutional-neural-network velocity baseline.
+
+    Regresses the drifter's next-step velocity vector directly from the local
+    context patch (currents, wind, bathymetry) with a small CNN. Trajectories
+    are integrated by converting the predicted velocity to a distance +
+    bearing and applying the inverse haversine formula, then repeating
+    hour-by-hour.
+
+    Prediction uncertainty is captured by Monte-Carlo dropout: the CNN keeps
+    its dropout layer active at inference time, so drawing ``num_samples``
+    trajectories yields distinct sample paths that reflect the model's
+    epistemic uncertainty. It serves as the "CNN baseline" in the paper.
+
+    Args:
+        name: Unique model identifier used as the checkpoint directory name.
+        params: Reserved for future extensions; currently only used for
+            checkpoint pathing.
+        load_ckpt: If ``True``, attempt to restore CNN parameters from an
+            existing checkpoint on construction.
+
+    Example::
+
+        model = ConvNetModel(
+            name="convnet_open_ocean",
+            params={"prediction_length": 72},
+        )
+    """
 
     def __init__(self, name: str, params: dict, load_ckpt: bool = False):
         """
@@ -290,6 +317,28 @@ class ConvNetModel(BaseTrajectoryModel):
         test_dataset: OceanDataset,
         num_samples: int = 1,
     ) -> jnp.ndarray:
+        """Roll the CNN velocity model forward from ``start_position``.
+
+        For each of ``prediction_length`` hours: extract the context patch at
+        the current position, predict a velocity vector, convert it to a
+        1-hour distance + bearing, and step forward via inverse haversine.
+        Dropout stays active during prediction, so each of the ``num_samples``
+        sample trajectories draws its own MC-dropout mask and produces a
+        distinct path — this is how the CNN baseline models uncertainty.
+
+        Args:
+            start_position: ``(2,)`` array of ``(lat, lon)`` degrees at t=0.
+            start_time: Wall-clock start time; determines which context slices
+                the interpolator reads.
+            prediction_length: Number of future hours to predict.
+            interpolator: 3-D interpolator for the context fields.
+            test_dataset: Dataset providing ``get_context`` (context extraction).
+            num_samples: Number of Monte-Carlo dropout trajectories to draw.
+
+        Returns:
+            ``(num_samples, prediction_length, 2)`` array of predicted
+            ``(lat, lon)`` positions, excluding the start position.
+        """
 
         times = self._get_prediction_steps(start_time, prediction_length)
         num_preds = num_samples

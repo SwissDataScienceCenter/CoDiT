@@ -332,7 +332,62 @@ def model_predict(
 
 
 class AutoregressiveModel(BaseTrajectoryModel):
+    """Non-diffusion autoregressive trajectory model (GRU or Transformer).
+
+    Directly predicts the next-step displacement (scaled velocity in metres)
+    from the current position and the local context patch, without a
+    denoising process. This is the "direct prediction" baseline referenced in
+    the paper: it uses the same backbone architectures as ``CoDiTModel``
+    (GRU / Transformer + conv/mlp/gap context encoder) but is trained with an
+    MSE-style regression loss rather than the diffusion objective.
+
+    Because the model is deterministic given the input, multiple prediction
+    samples for the same start position are identical; ``num_samples`` in
+    ``predict`` is retained for API symmetry with ``CoDiTModel``.
+
+    Supported backbones (``params["model_type"]``):
+
+    - ``"GRU"``: recurrent denoiser
+    - ``"Transformer"``: attention-based denoiser
+
+    Args:
+        name: Unique model identifier used as the checkpoint directory name.
+        params: Model hyperparameters. Unset keys fall back to internal defaults:
+
+            - ``prediction_length`` (int): number of steps to predict (**required**)
+            - ``model_type`` (str): ``"GRU"`` or ``"Transformer"`` (default ``"GRU"``)
+            - ``context_encoder_type`` (str): ``"conv"``, ``"mlp"``, or ``"gap"``
+              (default ``"conv"``)
+            - ``num_layers`` (int): backbone depth (default ``2``)
+            - ``hidden_dims`` (int): hidden state size (default ``64``)
+            - ``time_emb`` (int): time-embedding size (default ``64``)
+            - ``num_heads`` (int): attention heads (Transformer only, default ``8``)
+            - ``max_len`` (int): maximum sequence length (default ``100``)
+
+    Example::
+
+        model = AutoregressiveModel(
+            name="gru_open_ocean",
+            params={"prediction_length": 72, "model_type": "GRU"},
+        )
+    """
+
     def __init__(self, name: str, params: dict):
+        """Initialise the autoregressive model and its Flax backbone.
+
+        See the class docstring for supported ``params`` keys.
+
+        Args:
+            name: Unique model identifier; also the checkpoint subdirectory name
+                under ``config_paths.MODEL_PATH/ckpts/``.
+            params: Hyperparameter dictionary. Must contain ``prediction_length``.
+
+        Attributes set:
+            model (Autoregressive): Flax module implementing the chosen backbone.
+            ckpt_dir (str): Absolute path to the model's checkpoint directory.
+            nn_params: Set to ``None`` at construction; populated by ``fit`` or
+                ``import_trained_model``.
+        """
         super().__init__(name, params)
 
         default_params = {
@@ -542,6 +597,33 @@ class AutoregressiveModel(BaseTrajectoryModel):
         num_samples: int = 1,
         key: jax.Array = random.PRNGKey(0),
     ) -> jnp.ndarray:
+        """Roll the autoregressive model forward from ``start_position``.
+
+        At each hour, the model consumes the current position + context patch
+        and emits a scaled velocity vector; the next position is obtained via
+        an inverse haversine step. Because the model is deterministic, all
+        ``num_samples`` sample trajectories are identical (the argument is
+        retained for API symmetry with ``CoDiTModel.predict``).
+
+        Args:
+            start_position: ``(2,)`` array of ``(lat, lon)`` degrees at t=0.
+            start_time: Wall-clock start time; determines which context slices
+                the interpolator reads.
+            prediction_length: Number of future hours to predict.
+            interpolator: 3-D interpolator for the context fields.
+            test_dataset: Dataset providing ``get_context`` (context extraction).
+            num_samples: Number of sample trajectories. Deterministic, so all
+                samples coincide.
+            key: JAX PRNG key (unused; retained for API compatibility).
+
+        Returns:
+            ``(num_samples, prediction_length, 2)`` array of predicted
+            ``(lat, lon)`` positions, excluding the start position.
+
+        Raises:
+            ValueError: If ``self.nn_params`` is ``None`` (model not trained
+                or loaded).
+        """
         if self.nn_params is None:
             raise ValueError(
                 "Model parameters are not loaded. Train or load the model before predict."
@@ -632,6 +714,23 @@ class AutoregressiveModel(BaseTrajectoryModel):
     def export_trained_model(
         self, model_name: str | None = None, export_path: str | None = None
     ) -> None:
+        """Serialise the trained model to disk.
+
+        Writes ``model_config.yml`` (the ``params`` dict) and ``nn_params.pkl``
+        (the trained Flax parameters + input std) into
+        ``{export_path}/{model_name}/``. Refuses to overwrite an existing
+        directory.
+
+        Args:
+            model_name: Directory name under ``export_path``. Defaults to
+                ``self.name``.
+            export_path: Parent directory. Defaults to
+                ``{config_paths.MODEL_PATH}/trained_models``.
+
+        Raises:
+            Exception: If the target directory already exists.
+            ValueError: If ``self.nn_params`` is ``None`` (model not trained).
+        """
         if model_name is None:
             model_name = self.name
         if export_path is None:
@@ -662,6 +761,24 @@ class AutoregressiveModel(BaseTrajectoryModel):
     def import_trained_model(
         cls, model_name: str, import_path: str | None = None
     ) -> "AutoregressiveModel":
+        """Reconstruct a trained model from an ``export_trained_model`` bundle.
+
+        Reads ``model_config.yml`` and ``nn_params.pkl`` from
+        ``{import_path}/{model_name}/``, rebuilds the Flax backbone, and loads
+        the saved parameters.
+
+        Args:
+            model_name: Directory name under ``import_path``.
+            import_path: Parent directory. Defaults to
+                ``{config_paths.MODEL_PATH}/trained_models``.
+
+        Returns:
+            An ``AutoregressiveModel`` with ``nn_params`` populated and
+            ``trained_successfully`` set to ``True``.
+
+        Raises:
+            FileNotFoundError: If ``model_config.yml`` is missing.
+        """
         if import_path is None:
             import_path = os.path.join(config_paths.MODEL_PATH, "trained_models")
         model_path = os.path.join(import_path, model_name)

@@ -138,6 +138,34 @@ def load_checkpoint(model: nnx.Module, ckpt_dir: str) -> nnx.Module:
 
 
 class LinearGaussModel(BaseTrajectoryModel):
+    """Linear Gaussian velocity baseline (WDM in the paper).
+
+    Predicts the next-step displacement as ``alpha * v_context``, where
+    ``v_context`` is the ocean/wind velocity at the drifter's current position
+    read from the conditioning context, and ``alpha`` is a scalar coefficient
+    learned from the training trajectories. Prediction uncertainty is a
+    Gaussian with an isotropic learned standard deviation
+    ``sigma = exp(log_sigma)``. Trajectories are integrated by rolling the
+    predicted velocity forward one hour at a time via the inverse haversine
+    formula.
+
+    The model has exactly two trainable parameters (``alpha`` and
+    ``log_sigma``) and serves as the simplest sanity-check baseline in the
+    paper.
+
+    Args:
+        name: Unique model identifier used as the checkpoint directory name.
+        params: Reserved for future extensions; currently unused.
+        load_ckpt: If ``True``, attempt to restore ``alpha`` and ``log_sigma``
+            from an existing checkpoint on construction.
+
+    Example::
+
+        model = LinearGaussModel(
+            name="linear_gauss_open_ocean",
+            params={"prediction_length": 72},
+        )
+    """
 
     def __init__(self, name: str, params: dict, load_ckpt: bool = False):
         """Initialise the Linear Gaussian model.
