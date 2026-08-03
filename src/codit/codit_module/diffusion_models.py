@@ -579,15 +579,19 @@ def train(
     schedule_dict: dict,
     num_epochs: int = 100,
     num_batches_per_epoch: int = 100,
-    loss_list: list = [],
+    loss_list: Optional[list] = None,
     checkpoint_mngr: Optional[CheckpointManager] = None,
     val_dataloader: Optional[DataLoader] = None,
-    val_loss_list: list = [],
+    val_loss_list: Optional[list] = None,
     early_stopping_patience: int = 10,
     early_stopping_min_delta: float = 1e-4,
     writer: SummaryWriter | None = None,
     std: float | jnp.ndarray = 1.0,
 ) -> tuple:
+    if loss_list is None:
+        loss_list = []
+    if val_loss_list is None:
+        val_loss_list = []
 
     @jit
     def step_func(carry: tuple, batch: dict) -> tuple:
