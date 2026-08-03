@@ -232,5 +232,6 @@ notebooks/*
 !notebooks/making_predictions.ipynb
 !notebooks/01_train_quickstart.ipynb
 !notebooks/02_prepare_your_own_region.ipynb
+!notebooks/README.md
 
 oceancleanup/
