@@ -62,7 +62,7 @@ def preprocess_configs(
             logger.warning("failed to preprocess %s: %s — skipping", cfg["name"], e)
             continue
 
-    merged: OceanTrainingDataset | None = None
+    datasets: list[OceanTrainingDataset] = []
     for cfg in configs:
         intermediate = os.path.join(cfg["dataset_path"], f"training_data_{length}h.h5")
         if not os.path.exists(intermediate):
@@ -70,16 +70,19 @@ def preprocess_configs(
         try:
             one = OceanTrainingDataset.from_disk(cfg["dataset_path"], length)
             one.remove_nans()
-            merged = one if merged is None else merge_training_sets([merged, one])
+            datasets.append(one)
         except Exception as e:
-            logger.warning("failed to load intermediate for %s: %s — skipping", cfg["name"], e)
+            logger.warning(
+                "failed to load intermediate for %s: %s — skipping", cfg["name"], e
+            )
             continue
 
-    if merged is None:
+    if not datasets:
         raise RuntimeError(
             f"No intermediate training h5 files were produced for any of "
             f"{[c['name'] for c in configs]} — check config paths and inputs."
         )
 
+    merged = merge_training_sets(datasets)
     merged.save(output_path)
     return os.path.abspath(os.path.join(output_path, f"training_data_{length}h.h5"))
