@@ -39,7 +39,7 @@ The channel order is frozen at
 | 4     | ERA5 u-wind           | ERA5       |
 | 5     | ERA5 v-wind           | ERA5       |
 | 6     | Bathymetry (elevation)| GEBCO      |
-| 7     | Bathymetry (ocean=1)  | derived    |
+| 7     | Bathymetry (land=1)   | derived    |
 
 Channel 7 is a binary land/ocean mask built from channel 6 in
 [`src/codit/data_module/dataset.py:175-176`](../src/codit/data_module/dataset.py):
