@@ -69,10 +69,11 @@ def _synthetic_context_xarray(start_date: datetime, length_hours: int, lat: floa
 def two_patch_fixture(tmp_path, monkeypatch):
     """Two synthetic patches, both preprocessable without any external data."""
     monkeypatch.setenv("CODIT_DATA_PATH", str(tmp_path))
-    import importlib
     from codit.data_module import config_paths
-    importlib.reload(config_paths)
-    importlib.reload(config_funcs)
+    monkeypatch.setattr(config_paths, "DATA_PATH", str(tmp_path))
+    monkeypatch.setattr(config_paths, "CONFIG_PATH", os.path.join(str(tmp_path), "configs"))
+    monkeypatch.setattr(config_paths, "MODEL_PATH", str(tmp_path))
+    monkeypatch.setattr(config_paths, "RESULT_PATH", os.path.join(str(tmp_path), "results"))
 
     from codit.data_module import context_functions
 
