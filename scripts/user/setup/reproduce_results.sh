@@ -6,7 +6,7 @@ set -euo pipefail
 # Usage: bash scripts/user/setup/reproduce_results.sh
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-REPO_ROOT="$(dirname "$SCRIPT_DIR")"
+REPO_ROOT="$(dirname "$(dirname "$(dirname "$SCRIPT_DIR")")")"
 EVAL_DIR="$REPO_ROOT/my_scripts/model_fitting"
 
 echo "=== Evaluating Linear Gaussian — open_ocean ==="
