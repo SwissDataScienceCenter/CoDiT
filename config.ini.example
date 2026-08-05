@@ -1,0 +1,20 @@
+; Sample credentials file for downloading fresh region data.
+; Copy this file to `config.ini` at the repo root and fill in your values.
+;
+; Only fresh-region downloads need this. The Zenodo tarballs and the
+; shipped model checkpoints do not.
+;
+; Register:
+;   CDS  : https://cds.climate.copernicus.eu/      (needed for ERA5 wind)
+;   CMS  : https://marine.copernicus.eu/           (needed for GLORYS currents)
+;
+; To store this file outside the checkout, point CODIT_CREDENTIALS_PATH at it:
+;   export CODIT_CREDENTIALS_PATH=/path/to/your/config.ini
+
+[copernicus]
+url = https://cds.climate.copernicus.eu/api
+key = YOUR_CDS_API_KEY_HERE
+
+[copernicusmarine]
+username = YOUR_COPERNICUSMARINE_USERNAME
+password = YOUR_COPERNICUSMARINE_PASSWORD

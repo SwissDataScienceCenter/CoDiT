@@ -1,9 +1,11 @@
 # Custom
 *.ini
+!config.ini.example
 data/datasets
 data/results
 data/configs/*
 data/bathymetry/*
+data/ckpts/*
 wip/
 
 # Byte-compiled / optimized / DLL files

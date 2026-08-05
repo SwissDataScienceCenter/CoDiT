@@ -121,6 +121,7 @@ tolerates the new channel count. This is Phase 5 work.
 
 ## Cross-references
 
-- [`notebooks/user/01_train_quickstart.ipynb`](../notebooks/user/01_train_quickstart.ipynb) — end-to-end training on shipped `open_ocean` subset
-- [`notebooks/user/02_prepare_your_own_region.ipynb`](../notebooks/user/02_prepare_your_own_region.ipynb) — full pipeline for a new region
+- [`notebooks/user/01_predict_quickstart.ipynb`](../notebooks/user/01_predict_quickstart.ipynb) — 72 h forecast with the shipped `codit_GRU_open_ocean` checkpoint on a small downloaded region
+- [`notebooks/user/02_train_quickstart.ipynb`](../notebooks/user/02_train_quickstart.ipynb) — end-to-end training on shipped `open_ocean` subset
+- [`notebooks/user/03_prepare_your_own_region.ipynb`](../notebooks/user/03_prepare_your_own_region.ipynb) — full pipeline for a new region
 - [`README.md`](../README.md#train-on-your-own-region) — "Train on your own region" section

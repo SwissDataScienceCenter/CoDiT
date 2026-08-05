@@ -71,7 +71,7 @@ Current data location: `/mydata/adopt/christian/adopt/data_final/`
 
 ### Other directories
 
-- `notebooks/` - Tutorial and analysis notebooks (`user/get_started.ipynb` is the entry point)
+- `notebooks/` - Tutorial and analysis notebooks (`user/01_predict_quickstart.ipynb` is the entry point)
 - `paper/` - The CoDiT paper (PDF, TeX, markdown)
 - `plans/` - Implementation plan documents
 - `.devcontainer/` - Docker setup (base image: `chdonner/msml`)
