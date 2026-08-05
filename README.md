@@ -102,7 +102,7 @@ CoDiT/
 ### CoDiT (main model)
 
 ```bash
-python my_scripts/model_fitting/codit_train.py \
+python scripts/user/train/codit_train.py \
     --dataset open_ocean \
     --model_type GRU \
     --context_encoder_type conv \
@@ -136,7 +136,7 @@ The trained model is saved to `data/trained_models/ckpts/<model_name>/`.
 ### Linear Gaussian baseline
 
 ```bash
-python my_scripts/model_fitting/lingauss_train.py \
+python scripts/user/train/lingauss_train.py \
     --dataset open_ocean \
     --num_epochs 1000 \
     --num_batches_per_epoch 100 \

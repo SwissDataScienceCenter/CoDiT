@@ -91,8 +91,8 @@ Currently: `micromamba run -n codit python <script>`. A Dockerfile exists in `.d
 ### Training (example)
 
 ```bash
-python my_scripts/model_fitting/codit_train.py --dataset open_ocean
-python my_scripts/model_fitting/lingauss_train.py --dataset open_ocean
+python scripts/user/train/codit_train.py --dataset open_ocean
+python scripts/user/train/lingauss_train.py --dataset open_ocean
 ```
 
 ### Evaluation (example)

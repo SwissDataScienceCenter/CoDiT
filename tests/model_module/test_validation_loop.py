@@ -80,7 +80,7 @@ def test_codit_train_exposes_prediction_length():
     """codit_train.py must accept --prediction_length with default 72."""
     import os
     repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    calls = _load_arg_parser(os.path.join(repo, "..", "my_scripts", "model_fitting", "codit_train.py"))
+    calls = _load_arg_parser(os.path.join(repo, "..", "scripts", "user", "train", "codit_train.py"))
     names = [name for name, _ in calls]
     assert "--prediction_length" in names, f"missing --prediction_length in {names}"
     _, kwargs = next(c for c in calls if c[0] == "--prediction_length")
@@ -105,7 +105,7 @@ def test_codit_train_no_hardcoded_length_branch():
     """After the refactor, codit_train.py must not branch on dataset name to set length."""
     import os
     repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    with open(os.path.join(repo, "..", "my_scripts", "model_fitting", "codit_train.py")) as f:
+    with open(os.path.join(repo, "..", "scripts", "user", "train", "codit_train.py")) as f:
         src = f.read()
     assert 'if args.dataset == "open_ocean":' not in src
     assert 'elif args.dataset == "coastline":' not in src
