@@ -6,7 +6,7 @@ Measures two scenarios in one run so results are directly comparable:
   B — with-cache: cache persists across calls (post-optimisation)
 
 Run with:
-    micromamba run -n codit python my_scripts/model_fitting/benchmark_predict.py
+    micromamba run -n codit python scripts/dev/debug/benchmark_predict.py
 """
 import os
 import time
