@@ -53,3 +53,71 @@ def test_fixed_normalisation_is_finite_with_one_batch():
 def test_fixed_normalisation_is_finite_with_multiple_batches():
     result = _simulate_fixed_normalisation(num_batches=5)
     assert jnp.isfinite(result)
+
+
+def _load_arg_parser(script_path: str):
+    """Import the __main__ argparser of a train/eval script without executing it.
+
+    The scripts guard heavyweight setup behind `if __name__ == "__main__"`, so
+    parsing the AST for the argparser block is the cleanest way to inspect it.
+    """
+    import ast
+    with open(script_path) as f:
+        tree = ast.parse(f.read())
+    add_arg_calls = []
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "add_argument"
+        ):
+            if node.args and isinstance(node.args[0], ast.Constant):
+                add_arg_calls.append((node.args[0].value, {k.arg: k.value for k in node.keywords}))
+    return add_arg_calls
+
+
+def test_codit_train_exposes_prediction_length():
+    """codit_train.py must accept --prediction_length with default 72."""
+    import os
+    repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    calls = _load_arg_parser(os.path.join(repo, "..", "my_scripts", "model_fitting", "codit_train.py"))
+    names = [name for name, _ in calls]
+    assert "--prediction_length" in names, f"missing --prediction_length in {names}"
+    _, kwargs = next(c for c in calls if c[0] == "--prediction_length")
+    default_node = kwargs.get("default")
+    import ast
+    assert isinstance(default_node, ast.Constant) and default_node.value == 72
+
+
+def test_codit_eval_exposes_prediction_length():
+    """codit_eval.py must accept --prediction_length with default 72."""
+    import os, ast
+    repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    calls = _load_arg_parser(os.path.join(repo, "..", "my_scripts", "model_fitting", "codit_eval.py"))
+    names = [name for name, _ in calls]
+    assert "--prediction_length" in names
+    _, kwargs = next(c for c in calls if c[0] == "--prediction_length")
+    default_node = kwargs.get("default")
+    assert isinstance(default_node, ast.Constant) and default_node.value == 72
+
+
+def test_codit_train_no_hardcoded_length_branch():
+    """After the refactor, codit_train.py must not branch on dataset name to set length."""
+    import os
+    repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    with open(os.path.join(repo, "..", "my_scripts", "model_fitting", "codit_train.py")) as f:
+        src = f.read()
+    assert 'if args.dataset == "open_ocean":' not in src
+    assert 'elif args.dataset == "coastline":' not in src
+
+
+def test_codit_eval_no_hardcoded_length_branch():
+    """Same guard for codit_eval.py; dataset branch there also picked length."""
+    import os
+    repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    with open(os.path.join(repo, "..", "my_scripts", "model_fitting", "codit_eval.py")) as f:
+        src = f.read()
+    # The dataset branch may remain (it also builds config_path/result_path)
+    # but the `length = 72` / `length = 24` assignments inside it must be gone.
+    assert "length = 72" not in src
+    assert "length = 24" not in src

@@ -389,6 +389,7 @@ class CoDiTModel(BaseTrajectoryModel):
             "scheduler": None,
             "early_stopping_patience": 10,
             "early_stopping_min_delta": 1e-4,
+            "val_batch_size": 128,
         }
 
         # assert isinstance(train_dataset.trajectories, jnp.ndarray), (
@@ -410,7 +411,12 @@ class CoDiTModel(BaseTrajectoryModel):
         )
         val_dataset.set_context_var_idx(self.var_idx)
         val_dataloader = data.DataLoader(
-            val_dataset, batch_size=128, shuffle=False, drop_last=True
+            val_dataset,
+            batch_size=train_params.get(
+                "val_batch_size", default_train_params["val_batch_size"]
+            ),
+            shuffle=False,
+            drop_last=True,
         )
         num_epochs = train_params.get("num_epochs", default_train_params["num_epochs"])
         # num_batches_per_epoch = train_params.get('num_batches_per_epoch', default_train_params['num_batches_per_epoch'])

@@ -28,13 +28,15 @@ case "$model" in
     python codit_eval.py --dataset coastline --split "$split" \
       --model_type GRU --context_encoder_type conv --optimizer adam --K 100 \
       --input_vars $input_vars --result_subdir "$subdir" \
-      --model_name codit_GRU_coastline
+      --model_name codit_GRU_coastline \
+      --prediction_length 24
     ;;
   tf)
     python codit_eval.py --dataset coastline --split "$split" \
       --model_type Transformer --context_encoder_type conv --optimizer adam --K 100 \
       --input_vars $input_vars --result_subdir "$subdir" \
-      --model_name codit_Transformer_coastline
+      --model_name codit_Transformer_coastline \
+      --prediction_length 24
     ;;
   lingauss)
     python lingauss_eval.py --dataset coastline --split "$split" \

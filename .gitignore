@@ -9,6 +9,8 @@ my_scripts/*
 !my_scripts/model_fitting/
 runai_scripts/*
 !runai_scripts/fig4_*.sh
+!runai_scripts/ddpm_train_eval_configs.sh
+!runai_scripts/ddpm_eval_configs.sh
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -220,6 +222,7 @@ __marimo__/
 
 plans/*
 docs/*
+!docs/data_format.md
 .claude/*
 .vscode/*
 
@@ -227,5 +230,8 @@ docs/*
 notebooks/*
 !notebooks/get_started.ipynb
 !notebooks/making_predictions.ipynb
+!notebooks/01_train_quickstart.ipynb
+!notebooks/02_prepare_your_own_region.ipynb
+!notebooks/README.md
 
 oceancleanup/

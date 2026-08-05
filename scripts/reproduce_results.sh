@@ -22,25 +22,29 @@ echo ""
 echo "=== Evaluating CoDiT (GRU) — open_ocean ==="
 python "$EVAL_DIR/codit_eval.py" \
     --dataset open_ocean --split test --model_type GRU \
-    --model_name codit_GRU_open_ocean --evaluate_subset
+    --model_name codit_GRU_open_ocean --evaluate_subset \
+    --prediction_length 72
 
 echo ""
 echo "=== Evaluating CoDiT (GRU) — coastline ==="
 python "$EVAL_DIR/codit_eval.py" \
     --dataset coastline --split test --model_type GRU \
-    --model_name codit_GRU_coastline --evaluate_subset
+    --model_name codit_GRU_coastline --evaluate_subset \
+    --prediction_length 24
 
 echo ""
 echo "=== Evaluating CoDiT (Transformer) — open_ocean ==="
 python "$EVAL_DIR/codit_eval.py" \
     --dataset open_ocean --split test --model_type Transformer \
-    --model_name codit_Transformer_open_ocean --evaluate_subset
+    --model_name codit_Transformer_open_ocean --evaluate_subset \
+    --prediction_length 72
 
 echo ""
 echo "=== Evaluating CoDiT (Transformer) — coastline ==="
 python "$EVAL_DIR/codit_eval.py" \
     --dataset coastline --split test --model_type Transformer \
-    --model_name codit_Transformer_coastline --evaluate_subset
+    --model_name codit_Transformer_coastline --evaluate_subset \
+    --prediction_length 24
 
 echo ""
 echo "=== All evaluations complete ==="
