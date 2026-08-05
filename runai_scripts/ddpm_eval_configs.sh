@@ -1,5 +1,5 @@
 #!/bin/bash
-# Usage: ./train_and_eval.sh <dataset> <config_name>
+# Usage: ./ddpm_eval_configs.sh <dataset> <config_name> <split>
 
 dataset=$1
 config=$2
