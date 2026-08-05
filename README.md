@@ -37,20 +37,20 @@ The `open_ocean` and `coastline` datasets are hosted on Zenodo:
 
 ```bash
 # Download both datasets and bathymetry (~35 GB compressed)
-python scripts/download_data.py --dataset all --bathymetry
+python scripts/user/setup/download_data.py --dataset all --bathymetry
 ```
 
 To download a single dataset:
 
 ```bash
-python scripts/download_data.py --dataset open_ocean
-python scripts/download_data.py --dataset coastline
+python scripts/user/setup/download_data.py --dataset open_ocean
+python scripts/user/setup/download_data.py --dataset coastline
 ```
 
 ### 3. Reproduce paper results
 
 ```bash
-bash scripts/reproduce_results.sh
+bash scripts/user/setup/reproduce_results.sh
 ```
 
 This evaluates all models (Linear Gaussian, CoDiT-GRU, CoDiT-Transformer)

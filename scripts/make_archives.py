@@ -151,7 +151,7 @@ def main() -> None:
 
     print(
         "\nDone. Upload archives to Zenodo and update DATASET_URLS in "
-        "scripts/download_data.py."
+        "scripts/user/setup/download_data.py."
     )
 
 

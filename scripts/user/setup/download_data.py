@@ -2,10 +2,10 @@
 """Download CoDiT datasets and bathymetry.
 
 Usage:
-    python scripts/download_data.py --dataset open_ocean
-    python scripts/download_data.py --dataset coastline
-    python scripts/download_data.py --dataset all
-    python scripts/download_data.py --bathymetry
+    python scripts/user/setup/download_data.py --dataset open_ocean
+    python scripts/user/setup/download_data.py --dataset coastline
+    python scripts/user/setup/download_data.py --dataset all
+    python scripts/user/setup/download_data.py --bathymetry
 """
 
 import argparse

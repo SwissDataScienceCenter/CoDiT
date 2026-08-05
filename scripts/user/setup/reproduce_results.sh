@@ -2,8 +2,8 @@
 set -euo pipefail
 
 # Reproduce CoDiT paper results (Table 1).
-# Prerequisites: environment set up, data downloaded via scripts/download_data.py.
-# Usage: bash scripts/reproduce_results.sh
+# Prerequisites: environment set up, data downloaded via scripts/user/setup/download_data.py.
+# Usage: bash scripts/user/setup/reproduce_results.sh
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(dirname "$SCRIPT_DIR")"
