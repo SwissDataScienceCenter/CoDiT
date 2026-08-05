@@ -17,7 +17,7 @@ subdir=${3:-fig4_repro}
 
 source ~/.bashrc
 micromamba activate codit
-cd /mydata/adopt/christian/CoDiT/my_scripts/model_fitting
+cd /mydata/adopt/christian/CoDiT/scripts/dev/figures
 
 python summarize_fig4.py --dataset "$dataset" --split "$split" \
   --result_subdir "$subdir"

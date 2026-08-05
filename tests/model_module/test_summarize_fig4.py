@@ -17,7 +17,7 @@ import pytest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SUMMARIZE_SCRIPT = REPO_ROOT / "my_scripts" / "model_fitting" / "summarize_fig4.py"
+SUMMARIZE_SCRIPT = REPO_ROOT / "scripts" / "dev" / "figures" / "summarize_fig4.py"
 
 
 def _make_synthetic_patch(model_dir: Path, n_traj: int = 2, n_samples: int = 3, pred_len: int = 5):
