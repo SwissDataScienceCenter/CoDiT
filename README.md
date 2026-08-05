@@ -167,10 +167,10 @@ sea-surface temperature, salinity) must adapt code — see the last section of
 
 Two notebooks walk through the workflow:
 
-- [`notebooks/01_train_quickstart.ipynb`](notebooks/01_train_quickstart.ipynb) — trains a
+- [`notebooks/user/01_train_quickstart.ipynb`](notebooks/user/01_train_quickstart.ipynb) — trains a
   small CoDiT-GRU on a subset of the shipped `open_ocean` data (≈10 min on CPU).
   Start here if you want to see the training loop end-to-end.
-- [`notebooks/02_prepare_your_own_region.ipynb`](notebooks/02_prepare_your_own_region.ipynb) —
+- [`notebooks/user/02_prepare_your_own_region.ipynb`](notebooks/user/02_prepare_your_own_region.ipynb) —
   full pipeline for a new region: pick lat/lon + date range, download the four
   sources, preprocess into a merged h5, train, evaluate.
 

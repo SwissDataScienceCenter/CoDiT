@@ -121,6 +121,6 @@ tolerates the new channel count. This is Phase 5 work.
 
 ## Cross-references
 
-- [`notebooks/01_train_quickstart.ipynb`](../notebooks/01_train_quickstart.ipynb) — end-to-end training on shipped `open_ocean` subset
-- [`notebooks/02_prepare_your_own_region.ipynb`](../notebooks/02_prepare_your_own_region.ipynb) — full pipeline for a new region
+- [`notebooks/user/01_train_quickstart.ipynb`](../notebooks/user/01_train_quickstart.ipynb) — end-to-end training on shipped `open_ocean` subset
+- [`notebooks/user/02_prepare_your_own_region.ipynb`](../notebooks/user/02_prepare_your_own_region.ipynb) — full pipeline for a new region
 - [`README.md`](../README.md#train-on-your-own-region) — "Train on your own region" section
