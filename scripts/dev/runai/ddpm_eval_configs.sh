@@ -7,7 +7,7 @@ split=$3
 
 source ~/.bashrc
 micromamba activate codit
-cd /mydata/adopt/christian/CoDiT/my_scripts/model_fitting
+cd /mydata/adopt/christian/CoDiT/scripts/user/eval
 
 if [[ "$dataset" == "open_ocean" ]]; then
     pred_len=72

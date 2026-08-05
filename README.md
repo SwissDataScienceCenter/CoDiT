@@ -86,14 +86,20 @@ CoDiT/
 │   ├── data_module/            # Data loading, transforms, context extraction
 │   ├── model_module/           # CoDiT, Linear Gaussian, CNN, physics baselines
 │   └── eval_module/            # Evaluation metrics
-├── my_scripts/model_fitting/   # Training and evaluation scripts
-├── scripts/                    # Download and reproduction scripts
+├── scripts/
+│   ├── user/                   # User-facing entry points
+│   │   ├── setup/              # download_data.py, reproduce_results.sh
+│   │   ├── train/              # codit_train.py, lingauss_train.py
+│   │   └── eval/               # codit_eval.py, lingauss_eval.py
+│   └── dev/                    # Author-only scripts (baselines, figures, cluster, ...)
 ├── data/
 │   ├── trained_models/         # Shipped model checkpoints (~4 MB total)
 │   ├── datasets/               # Downloaded NetCDF datasets (not in git)
 │   ├── configs/                # Downloaded YAML configs (not in git)
 │   └── bathymetry/             # Downloaded GEBCO data (not in git)
-├── notebooks/                  # Tutorial notebooks
+├── notebooks/
+│   ├── user/                   # Tutorial notebooks
+│   └── dev/                    # Author exploration notebooks
 └── paper/                      # CoDiT paper (PDF, TeX)
 ```
 

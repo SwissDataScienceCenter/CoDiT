@@ -8,7 +8,7 @@ run_name=${4:-}
 
 source ~/.bashrc
 micromamba activate codit
-cd /mydata/adopt/christian/CoDiT/my_scripts/model_fitting
+cd /mydata/adopt/christian/CoDiT
 
 if [[ "$dataset" == "open_ocean" ]]; then
     pred_len=72
@@ -130,7 +130,7 @@ case $config in
 esac
 
 
-python codit_train.py \
+python scripts/user/train/codit_train.py \
   --dataset "$dataset" \
   --model_type "$model_type" \
   --num_epochs 1000 \
@@ -146,7 +146,7 @@ python codit_train.py \
   --run_name "$run_name" \
   --prediction_length "$pred_len"
 
-python codit_eval.py \
+python scripts/user/eval/codit_eval.py \
   --dataset "$dataset" \
   --model_type "$model_type" \
   --split "$split" \

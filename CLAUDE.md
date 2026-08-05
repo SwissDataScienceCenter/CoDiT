@@ -42,10 +42,20 @@ The full refactor plan with phased scope, affected files, and tech debt inventor
   - `base_model.py` - Base class
 - **`eval_module/`** - Evaluation metrics
 
-### Scripts (`my_scripts/`)
+### Scripts (`scripts/`)
 
-- **`model_fitting/`** - Training and evaluation scripts (`codit_train.py`, `codit_eval.py`, `lingauss_train.py`, etc.)
-- **`figures/`** - Plot generation scripts for paper figures
+All scripts live under `scripts/`, split by audience:
+
+- **`scripts/user/`** — entry points for external users (reviewers, paper reproducers)
+  - `setup/` — `download_data.py`, `reproduce_results.sh`
+  - `train/` — `codit_train.py`, `lingauss_train.py`
+  - `eval/` — `codit_eval.py`, `lingauss_eval.py`
+- **`scripts/dev/`** — author-only working code
+  - `baselines/` — comparison model train/eval scripts (ConvNet, GRU, Direct, HYCOM, HYCOM-Parcels)
+  - `data/` — data-preparation and Zenodo upload scripts
+  - `figures/` — paper figure generation scripts (`.py` + one `.ipynb`)
+  - `debug/` — ad-hoc benchmark and debug scripts
+  - `runai/` — RunAI cluster job submission shell scripts
 
 ### Data (`data/` in this repo, currently mostly in `../adopt/data_final/`)
 
@@ -61,8 +71,7 @@ Current data location: `/mydata/adopt/christian/adopt/data_final/`
 
 ### Other directories
 
-- `notebooks/` - Tutorial and analysis notebooks (`get_started.ipynb` is the entry point)
-- `runai_scripts/` - Shell scripts for RunAI cluster job submission
+- `notebooks/` - Tutorial and analysis notebooks (`user/get_started.ipynb` is the entry point)
 - `paper/` - The CoDiT paper (PDF, TeX, markdown)
 - `plans/` - Implementation plan documents
 - `.devcontainer/` - Docker setup (base image: `chdonner/msml`)

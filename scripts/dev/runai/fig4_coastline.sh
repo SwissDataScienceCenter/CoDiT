@@ -19,7 +19,7 @@ subdir=${3:-fig4_repro}
 
 source ~/.bashrc
 micromamba activate codit
-cd /mydata/adopt/christian/CoDiT/my_scripts/model_fitting
+cd /mydata/adopt/christian/CoDiT/scripts/user/eval
 
 input_vars="hycom_current copernicus_current era5_wind bathymetry"
 
