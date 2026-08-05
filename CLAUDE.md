@@ -98,8 +98,8 @@ python scripts/user/train/lingauss_train.py --dataset open_ocean
 ### Evaluation (example)
 
 ```bash
-python my_scripts/model_fitting/codit_eval.py --dataset open_ocean
-python my_scripts/model_fitting/lingauss_eval.py --dataset open_ocean
+python scripts/user/eval/codit_eval.py --dataset open_ocean
+python scripts/user/eval/lingauss_eval.py --dataset open_ocean
 ```
 
 ## Data shipping

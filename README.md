@@ -60,11 +60,11 @@ are saved as `.npz` files under `data/results/`.
 To run a single evaluation:
 
 ```bash
-python my_scripts/model_fitting/codit_eval.py \
+python scripts/user/eval/codit_eval.py \
     --dataset open_ocean --split test \
     --model_name codit_GRU_open_ocean --evaluate_subset
 
-python my_scripts/model_fitting/lingauss_eval.py \
+python scripts/user/eval/lingauss_eval.py \
     --dataset coastline --split test
 ```
 

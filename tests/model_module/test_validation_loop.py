@@ -93,7 +93,7 @@ def test_codit_eval_exposes_prediction_length():
     """codit_eval.py must accept --prediction_length with default 72."""
     import os, ast
     repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    calls = _load_arg_parser(os.path.join(repo, "..", "my_scripts", "model_fitting", "codit_eval.py"))
+    calls = _load_arg_parser(os.path.join(repo, "..", "scripts", "user", "eval", "codit_eval.py"))
     names = [name for name, _ in calls]
     assert "--prediction_length" in names
     _, kwargs = next(c for c in calls if c[0] == "--prediction_length")
@@ -115,7 +115,7 @@ def test_codit_eval_no_hardcoded_length_branch():
     """Same guard for codit_eval.py; dataset branch there also picked length."""
     import os
     repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    with open(os.path.join(repo, "..", "my_scripts", "model_fitting", "codit_eval.py")) as f:
+    with open(os.path.join(repo, "..", "scripts", "user", "eval", "codit_eval.py")) as f:
         src = f.read()
     # The dataset branch may remain (it also builds config_path/result_path)
     # but the `length = 72` / `length = 24` assignments inside it must be gone.

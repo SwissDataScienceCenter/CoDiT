@@ -7,7 +7,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(dirname "$(dirname "$(dirname "$SCRIPT_DIR")")")"
-EVAL_DIR="$REPO_ROOT/my_scripts/model_fitting"
+EVAL_DIR="$REPO_ROOT/scripts/user/eval"
 
 echo "=== Evaluating Linear Gaussian — open_ocean ==="
 python "$EVAL_DIR/lingauss_eval.py" \
