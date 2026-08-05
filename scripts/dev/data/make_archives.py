@@ -3,13 +3,13 @@
 
 Usage:
     # Create all archives:
-    python scripts/make_archives.py --src /path/to/data_final --out /path/to/archives
+    python scripts/dev/data/make_archives.py --src /path/to/data_final --out /path/to/archives
 
     # Strip dataset_path from configs in-place (e.g. data/configs):
-    python scripts/make_archives.py --strip-inplace data/configs
+    python scripts/dev/data/make_archives.py --strip-inplace data/configs
 
     # Partial run:
-    python scripts/make_archives.py --src ... --out ... --datasets open_ocean --splits train val
+    python scripts/dev/data/make_archives.py --src ... --out ... --datasets open_ocean --splits train val
 """
 import argparse
 import io

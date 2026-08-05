@@ -1,11 +1,11 @@
-"""Tests for scripts/make_archives.py."""
+"""Tests for scripts/dev/data/make_archives.py."""
 import sys
 import tarfile
 from pathlib import Path
 
 import yaml
 
-sys.path.insert(0, str(Path(__file__).parents[2] / "scripts"))
+sys.path.insert(0, str(Path(__file__).parents[2] / "scripts" / "dev" / "data"))
 from make_archives import (  # noqa: E402
     make_config_archive,
     make_data_archive,

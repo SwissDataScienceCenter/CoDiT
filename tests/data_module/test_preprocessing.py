@@ -144,7 +144,7 @@ def test_preprocess_configs_writes_expected_h5(two_patch_fixture):
 
 
 def test_cli_matches_helper(two_patch_fixture, monkeypatch):
-    """`scripts/precompute_trainset.py --dataset unit --split train` produces a
+    """`scripts/dev/data/precompute_trainset.py --dataset unit --split train` produces a
     merged h5 with the same shape as calling the helper directly."""
     import subprocess
     import sys
@@ -152,7 +152,7 @@ def test_cli_matches_helper(two_patch_fixture, monkeypatch):
 
     configs, tmp_path = two_patch_fixture
     repo_root = Path(__file__).resolve().parents[2]
-    cli = repo_root / "scripts" / "precompute_trainset.py"
+    cli = repo_root / "scripts" / "dev" / "data" / "precompute_trainset.py"
 
     # The CLI cannot inherit our monkeypatched context_functions.load_data.
     # Provide a tiny sitecustomize.py on PYTHONPATH that installs the same

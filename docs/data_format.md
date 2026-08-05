@@ -100,7 +100,7 @@ $CODIT_DATA_PATH/
 
 Note the historical `datasets/processed/` nesting used by the shipped
 `open_ocean` and `coastline` datasets; the CLI in
-`scripts/precompute_trainset.py` writes new datasets to
+`scripts/dev/data/precompute_trainset.py` writes new datasets to
 `<dataset>/<split>/processed/` instead.
 
 ## Adding a new context feature

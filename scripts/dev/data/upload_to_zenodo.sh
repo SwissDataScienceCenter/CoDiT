@@ -4,9 +4,9 @@
 #
 # Usage:
 #   export ZENODO_TOKEN=<token from https://zenodo.org/account/settings/applications/tokens/new>
-#   scripts/upload_to_zenodo.sh                     # production Zenodo
-#   ZENODO_SANDBOX=1 scripts/upload_to_zenodo.sh    # sandbox (for a dry run)
-#   ZENODO_DEP_ID=1234567 scripts/upload_to_zenodo.sh  # resume into an existing deposition
+#   scripts/dev/data/upload_to_zenodo.sh                     # production Zenodo
+#   ZENODO_SANDBOX=1 scripts/dev/data/upload_to_zenodo.sh    # sandbox (for a dry run)
+#   ZENODO_DEP_ID=1234567 scripts/dev/data/upload_to_zenodo.sh  # resume into an existing deposition
 #
 # On success, prints the deposition ID, edit URL, and (after you add metadata
 # and publish in the web UI) the record ID to paste into download_data.py.

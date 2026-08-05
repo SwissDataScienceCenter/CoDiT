@@ -4,7 +4,7 @@ Resolves configs from CONFIG_PATH/<dataset>/<split>/*.yml and writes the merged
 h5 to DATA_PATH/datasets/<dataset>/<split>/processed/.
 
 Usage:
-    python scripts/precompute_trainset.py \
+    python scripts/dev/data/precompute_trainset.py \
         --dataset open_ocean --split train \
         --length 72 --num_grid_points 16 --delta_metres 10000
 """
