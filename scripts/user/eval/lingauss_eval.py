@@ -66,6 +66,10 @@ if __name__ == "__main__":
         if config["start_date"].year >= 2020 and os.path.exists(config["dataset_path"]):
             val_datasets.append(dataset_name)
 
+    if args.evaluate_subset and len(val_datasets) > 20:
+        patch_indices = np.linspace(0, len(val_datasets) - 1, 20, dtype=int)
+        val_datasets = [val_datasets[i] for i in patch_indices]
+
     model = LinearGaussModel.import_trained_model(f"linear_gauss_{args.dataset}")
     # export_path = os.path.join(config_paths.CONV_NET_PATH, 'trained_models/')
     # model = ConvNetModel.import_trained_model(f'cnn_{args.dataset}', import_path=export_path)
@@ -76,11 +80,11 @@ if __name__ == "__main__":
             config = config_funcs.load_config(data_name, config_path)
             test_dataset = OceanDataset(config, length, 16, 10000, "linear")
         except Exception as e:
-            print(f"Error loading dataset {val_dataname}: {e}")
+            tqdm.write(f"Error loading dataset {val_dataname}: {e}")
             continue
 
         if len(test_dataset) == 0:
-            print(f"Empty dataset: {val_dataname}")
+            tqdm.write(f"Empty dataset: {val_dataname}")
             continue
         if args.evaluate_subset and len(test_dataset) > 200:
             # randomly select 200 indices from the dataset
@@ -95,9 +99,10 @@ if __name__ == "__main__":
                 indices=indices,
                 length=length,
                 num_samples=args.num_samples,
+                progress=data_name,
             )
         except ValueError as e:
-            print(f"Error evaluating dataset {val_dataname}: {e}")
+            tqdm.write(f"Error evaluating dataset {val_dataname}: {e}")
             continue
         jnp.savez(
             os.path.join(result_path, f"{data_name}_result.npz"),

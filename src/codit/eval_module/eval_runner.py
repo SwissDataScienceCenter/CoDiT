@@ -9,15 +9,13 @@ the two scripts stay in sync.
 
 from __future__ import annotations
 
-import logging
 from typing import Any
 
 from jax import numpy as jnp
 from jax import vmap
+from tqdm import tqdm
 
 from codit.data_module import data_transform
-
-logger = logging.getLogger(__name__)
 
 
 def run_eval(
@@ -26,6 +24,7 @@ def run_eval(
     indices: Any,
     length: int,
     num_samples: int = 1,
+    progress: bool | str = False,
 ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
     """Run the evaluation loop over a dataset and return accumulated results.
 
@@ -52,6 +51,9 @@ def run_eval(
         length: Number of prediction steps (passed directly to ``model.predict``).
         num_samples: Number of trajectory samples to draw from the model.
             Defaults to 1.
+        progress: If truthy, show an inner tqdm progress bar over ``indices``.
+            Pass a string to use as the bar's ``desc``. The bar uses
+            ``leave=False`` so it disappears when the loop completes.
 
     Returns:
         A 3-tuple ``(distances, pred_coords, true_coords)`` where
@@ -70,6 +72,13 @@ def run_eval(
     distances_list: list[jnp.ndarray] = []
     pred_coords_list: list[jnp.ndarray] = []
     true_coords_list: list[jnp.ndarray] = []
+
+    if progress:
+        indices = tqdm(
+            list(indices),
+            desc=progress if isinstance(progress, str) else "trajectories",
+            leave=False,
+        )
 
     for idx in indices:
         try:
@@ -90,7 +99,7 @@ def run_eval(
             pred_coords_list.append(pred_coord[None])
             true_coords_list.append(coordinates[:, :][None])
         except ValueError as e:
-            logger.warning("Skipping index %d: %s", idx, e)
+            tqdm.write(f"Skipping index {idx}: {e}")
             continue
 
     if not distances_list:

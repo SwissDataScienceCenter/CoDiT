@@ -106,6 +106,10 @@ if __name__ == "__main__":
         if config["start_date"].year >= 2020 and os.path.exists(config["dataset_path"]):
             val_datasets.append(dataset_name)
 
+    if args.evaluate_subset and len(val_datasets) > 20:
+        patch_indices = np.linspace(0, len(val_datasets) - 1, 20, dtype=int)
+        val_datasets = [val_datasets[i] for i in patch_indices]
+
     # model_name = f"diffusion_model_{args.dataset}_{args.model_type}_{args.context_encoder_type}_{args.optimizer}_{args.scheduler}"
     model = CoDiTModel.import_trained_model(model_name=model_name)
     num_predicted_traj = 0
@@ -117,11 +121,11 @@ if __name__ == "__main__":
                 config = config_funcs.load_config(data_name, config_path)
                 test_dataset = OceanDataset(config, length, 16, 10000, "linear")
             except Exception as e:
-                print(f"Error loading dataset {val_dataname}: {e}")
+                tqdm.write(f"Error loading dataset {val_dataname}: {e}")
                 continue
 
             if len(test_dataset) == 0:
-                print(f"Empty dataset: {val_dataname}")
+                tqdm.write(f"Empty dataset: {val_dataname}")
                 continue
             if args.evaluate_subset and len(test_dataset) > 200:
                 # select 200 regularly spaced indices from the dataset
@@ -135,9 +139,10 @@ if __name__ == "__main__":
                     indices=indices,
                     length=length,
                     num_samples=args.num_samples,
+                    progress=data_name,
                 )
             except ValueError as e:
-                print(f"Error evaluating dataset {val_dataname}: {e}")
+                tqdm.write(f"Error evaluating dataset {val_dataname}: {e}")
                 continue
             jnp.savez(
                 result_file,

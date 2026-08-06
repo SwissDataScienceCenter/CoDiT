@@ -95,66 +95,42 @@ def load_data(
 
     assert longitudes is not None
     assert latitudes is not None
-    if latitudes[0] < 10 and latitudes[1] < 10:
-        if longitudes[0] < -60 and longitudes[1] < -60:
-            bathy = xr.open_dataset(
-                os.path.join(
-                    config_paths.DATA_PATH,
-                    "bathymetry",
-                    "GEBCO_06_Jan_2025_ba69ac5d6a3b",
-                    "gebco_2023_n10.0_s-90.0_w-180.0_e-60.0.nc",
-                )
-            )
-        elif longitudes[0] < 70 and longitudes[1] < 70:
-            bathy = xr.open_dataset(
-                os.path.join(
-                    config_paths.DATA_PATH,
-                    "bathymetry",
-                    "GEBCO_06_Jan_2025_ba69ac5d6a3b",
-                    "gebco_2023_n10.0_s-90.0_w-70.0_e70.0.nc",
-                )
-            )
-        elif longitudes[0] < 180 and longitudes[1] < 180:
-            bathy = xr.open_dataset(
-                os.path.join(
-                    config_paths.DATA_PATH,
-                    "bathymetry",
-                    "GEBCO_06_Jan_2025_ba69ac5d6a3b",
-                    "gebco_2023_n10.0_s-90.0_w60.0_e180.0.nc",
-                )
-            )
-    elif latitudes[0] > -10 and latitudes[1] > -10:
-        if longitudes[0] < -60 and longitudes[1] < -60:
-            bathy = xr.open_dataset(
-                os.path.join(
-                    config_paths.DATA_PATH,
-                    "bathymetry",
-                    "GEBCO_06_Jan_2025_ba69ac5d6a3b",
-                    "gebco_2023_n90.0_s-10.0_w-180.0_e-60.0.nc",
-                )
-            )
-        elif longitudes[0] < 70 and longitudes[1] < 70:
-            bathy = xr.open_dataset(
-                os.path.join(
-                    config_paths.DATA_PATH,
-                    "bathymetry",
-                    "GEBCO_06_Jan_2025_ba69ac5d6a3b",
-                    "gebco_2023_n90.0_s-10.0_w-70.0_e70.0.nc",
-                )
-            )
-        elif longitudes[0] < 180 and longitudes[1] < 180:
-            bathy = xr.open_dataset(
-                os.path.join(
-                    config_paths.DATA_PATH,
-                    "bathymetry",
-                    "GEBCO_06_Jan_2025_ba69ac5d6a3b",
-                    "gebco_2023_n90.0_s-10.0_w60.0_e180.0.nc",
-                )
-            )
-    else:
+
+    # GEBCO bathymetry tiles: (lat_min, lat_max, lon_min, lon_max, filename).
+    # The six tiles overlap and together cover the entire globe.
+    # A patch is routed to the first tile whose bounds fully contain it.
+    BATHY_TILES = [
+        (-90, 10, -180, -60, "gebco_2023_n10.0_s-90.0_w-180.0_e-60.0.nc"),
+        (-90, 10, -70, 70, "gebco_2023_n10.0_s-90.0_w-70.0_e70.0.nc"),
+        (-90, 10, 60, 180, "gebco_2023_n10.0_s-90.0_w60.0_e180.0.nc"),
+        (-10, 90, -180, -60, "gebco_2023_n90.0_s-10.0_w-180.0_e-60.0.nc"),
+        (-10, 90, -70, 70, "gebco_2023_n90.0_s-10.0_w-70.0_e70.0.nc"),
+        (-10, 90, 60, 180, "gebco_2023_n90.0_s-10.0_w60.0_e180.0.nc"),
+    ]
+    bathy_filename = None
+    for lat_min, lat_max, lon_min, lon_max, filename in BATHY_TILES:
+        if (
+            latitudes[0] >= lat_min
+            and latitudes[1] <= lat_max
+            and longitudes[0] >= lon_min
+            and longitudes[1] <= lon_max
+        ):
+            bathy_filename = filename
+            break
+    if bathy_filename is None:
         raise ValueError(
-            "Latitude and longitude ranges not supported. Please check the config."
+            f"No single bathymetry tile fully covers latitudes {latitudes}, "
+            f"longitudes {longitudes}. The patch either spans a tile boundary "
+            "outside the overlap zones or wraps across the antimeridian."
         )
+    bathy = xr.open_dataset(
+        os.path.join(
+            config_paths.DATA_PATH,
+            "bathymetry",
+            "GEBCO_06_Jan_2025_ba69ac5d6a3b",
+            bathy_filename,
+        )
+    )
 
     bathy = bathy.rename({"lat": "latitude", "lon": "longitude"})
     hycom_data = xr.open_dataset(config["hycom_file"]).isel(depth=0, drop=True)
