@@ -55,8 +55,13 @@ def download_file(url: str, dest: str) -> None:
 def extract_tarball(path: str, dest: str) -> None:
     """Extract a .tar.gz archive and remove the tarball."""
     print(f"  Extracting {os.path.basename(path)} -> {dest}")
+    dest_abs = os.path.abspath(dest)
     with tarfile.open(path, "r:gz") as tar:
-        tar.extractall(path=dest)
+        for member in tar.getmembers():
+            member_path = os.path.abspath(os.path.join(dest_abs, member.name))
+            if not member_path.startswith(dest_abs + os.sep):
+                raise RuntimeError(f"Unsafe path in tar archive: {member.name}")
+        tar.extractall(path=dest_abs)
     os.remove(path)
 
 
@@ -115,10 +120,10 @@ def main() -> None:
     if args.data_path:
         data_path = args.data_path
     else:
-        repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        data_path = os.environ.get(
-            "CODIT_DATA_PATH", os.path.join(repo_root, "data")
+        repo_root = os.path.dirname(
+            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         )
+        data_path = os.environ.get("CODIT_DATA_PATH", os.path.join(repo_root, "data"))
 
     print(f"Data directory: {data_path}")
 
