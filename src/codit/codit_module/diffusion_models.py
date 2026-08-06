@@ -1,5 +1,5 @@
 from functools import partial
-from typing import Any, Optional
+from typing import Optional
 
 import jax
 import jax.numpy as jnp
@@ -18,7 +18,7 @@ from tqdm import tqdm
 
 from codit.codit_module import noising_functions
 from codit.codit_module.brownian_noise_models import WalkNoiseModel
-from codit.data_module import data_transform
+from codit.data_module.data_transform import transform_traj_to_metre
 
 ##### Model stuff #####
 
@@ -390,11 +390,14 @@ class Autoregressive_RNN(nn.Module):
 
     @nn.compact
     def __call__(
-        self, x: jnp.ndarray, context: jnp.ndarray, initial_carry: jnp.ndarray | None = None
+        self,
+        x: jnp.ndarray,
+        context: jnp.ndarray,
+        initial_carry: jnp.ndarray | None = None,
     ) -> jnp.ndarray:
         for i in range(0, self.num_layers):
             x = jnp.concatenate([x, context], axis=-1)
-            x = nn.RNN(nn.GRUCell(self.num_hidden))(x, initial_carry=initial_carry) # type: ignore
+            x = nn.RNN(nn.GRUCell(self.num_hidden))(x, initial_carry=initial_carry)  # type: ignore
         return x
 
 
@@ -502,14 +505,6 @@ class Autoregressive_Denoiser(nn.Module):
 ##### train
 
 
-def transform_traj_to_metre(traj: jnp.ndarray) -> jnp.ndarray:
-    velocity_vectors = jax.vmap(
-        data_transform.velocity_vector_from_pos_time, in_axes=(None, 0, None)
-    )(traj[0], traj, 3600)
-    traj_in_metres = velocity_vectors * 3600
-    return traj_in_metres
-
-
 def transform_batch(torch_batch: tuple, std: float | jnp.ndarray) -> dict:
     trajectory = jnp.asarray(torch_batch[0])
     traj_in_metres = jax.vmap(transform_traj_to_metre)(trajectory)
@@ -584,20 +579,25 @@ def train(
     schedule_dict: dict,
     num_epochs: int = 100,
     num_batches_per_epoch: int = 100,
-    loss_list: list = [],
+    loss_list: Optional[list] = None,
     checkpoint_mngr: Optional[CheckpointManager] = None,
     val_dataloader: Optional[DataLoader] = None,
-    val_loss_list: list = [],
-    early_stopping_kwargs: dict = {"patience": 30, "min_delta": 1e-4},
+    val_loss_list: Optional[list] = None,
+    early_stopping_patience: int = 10,
+    early_stopping_min_delta: float = 1e-4,
     writer: SummaryWriter | None = None,
     std: float | jnp.ndarray = 1.0,
 ) -> tuple:
+    if loss_list is None:
+        loss_list = []
+    if val_loss_list is None:
+        val_loss_list = []
 
-    
-    
     @jit
     def step_func(carry: tuple, batch: dict) -> tuple:
-        assert isinstance(train_dataloader.batch_size, int), "Batch size must be an integer."
+        assert isinstance(
+            train_dataloader.batch_size, int
+        ), "Batch size must be an integer."
         return train_step(
             carry,
             batch,
@@ -613,7 +613,9 @@ def train(
 
         @jit
         def get_loss_func(carry: tuple, batch: dict) -> tuple:
-            assert isinstance(val_dataloader.batch_size, int), "Batch size must be an integer."
+            assert isinstance(
+                val_dataloader.batch_size, int
+            ), "Batch size must be an integer."
             return get_loss(
                 carry,
                 batch,
@@ -624,12 +626,16 @@ def train(
                 val_dataloader.batch_size,
             )
 
-    early_stop = EarlyStopping(**early_stopping_kwargs)
+    early_stop = EarlyStopping(
+        patience=early_stopping_patience, min_delta=early_stopping_min_delta
+    )
     # train_loss = jnp.nan
     val_loss = jnp.nan
     # progress bar with losses
     pbar = tqdm(total=num_epochs, desc="Training", dynamic_ncols=True)
-    assert isinstance(train_dataloader.batch_size, int), "Batch size must be an integer."
+    assert isinstance(
+        train_dataloader.batch_size, int
+    ), "Batch size must be an integer."
 
     for epoch in range(num_epochs):
         carry = (params, opt_state, key, 0)
@@ -647,7 +653,9 @@ def train(
         )
         loss_log = {"loss": loss_list[-1]}
         if val_dataloader is not None:
-            assert isinstance(val_dataloader.batch_size, int), "Batch size must be an integer."
+            assert isinstance(
+                val_dataloader.batch_size, int
+            ), "Batch size must be an integer."
             carry = (params, opt_state, key, 0)
             for batch in val_dataloader:
                 # batch.pop('forecast_start')
@@ -669,7 +677,7 @@ def train(
                 "key": key,
                 "epoch": epoch,
             }
-            checkpoint_mngr.save(epoch, args=ocp.args.StandardSave(ckpt)) # type: ignore
+            checkpoint_mngr.save(epoch, args=ocp.args.StandardSave(ckpt))  # type: ignore
         if early_stop.should_stop:
             print(f"Early stopping at epoch {epoch}")
             break

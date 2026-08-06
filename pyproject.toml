@@ -1,10 +1,72 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "CoDiT"
+version = "0.0.1"
+description = "Conditional Diffusion Trajectory predictions for ocean drifters"
+license = "MIT"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+    {name = "Christian Donner", email = "christian.research@mailbox.org"},
+]
+classifiers = [
+    "Topic :: Scientific/Engineering :: Mathematics",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Programming Language :: Python",
+]
+dependencies = [
+    "matplotlib",
+    "numpy>=1.19.5",
+    "cartopy",
+    "cdsapi",
+    "cfgrib",
+    "pyyaml",
+    "xarray==2024.2.0",
+    "cftime",
+    "pandas",
+    "jax>=0.2.10",
+    "jaxlib>=0.1.60",
+    "flax>=0.10.6",
+    "copernicusmarine",
+    "interpax",
+    "geopandas",
+    "wandb",
+    "scipy>=1.7.3",
+    "torch",
+    "tensorboard",
+    "tqdm",
+    "h5py",
+    "requests",
+    "optax",
+    "orbax-checkpoint",
+]
+
+[project.optional-dependencies]
+parcels = ["parcels", "zarr"]
+viz = ["streamlit==1.25.0"]
+dev = [
+    "black",
+    "ruff",
+    "pre-commit",
+    "pytest",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
 [tool.black]
 line-length = 88
 
 [tool.ruff]
 line-length = 88
-target-version = "py311"
+target-version = "py310"
 
-[tool.mypy]
-ignore_missing_imports = true
-disallow_untyped_defs = true
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::UserWarning",
+]

@@ -1,12 +1,12 @@
 # Custom
 *.ini
-*config_paths.py
-data/datasets/*
+!config.ini.example
+data/datasets
+data/results
 data/configs/*
 data/bathymetry/*
+data/ckpts/*
 wip/
-my_scripts/*
-runai_scripts/*
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -215,3 +215,14 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+plans/*
+docs/*
+!docs/data_format.md
+.claude/*
+.vscode/*
+
+# Local-only dev notebooks (not shipped)
+notebooks/dev/*
+
+oceancleanup/

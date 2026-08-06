@@ -8,6 +8,8 @@ import os
 
 import yaml
 
+from codit.data_module import config_paths
+
 
 def complete_config(config: dict) -> dict:
     """Complete the config dictionary with paths and filenames based on the provided configuration.
@@ -78,6 +80,16 @@ def load_config(data_name: str, config_path: str) -> dict:
     with open(path, "r") as f:
         config = yaml.safe_load(f)
 
+    # Reconstruct dataset_path relative to current DATA_PATH.
+    # YAML configs store stale absolute paths from the original environment.
+    # Config directory structure mirrors dataset structure:
+    #   config lives at:  CONFIG_PATH/{dataset}/{split}/{name}.yml
+    #   data lives at:    DATA_PATH/datasets/{dataset}/{split}/{name}/
+    rel = os.path.relpath(config_path, config_paths.CONFIG_PATH)
+    config["dataset_path"] = os.path.join(
+        config_paths.DATA_PATH, "datasets", rel, config["name"]
+    )
+
     config = complete_config(config)
     return config
 
@@ -85,15 +97,20 @@ def load_config(data_name: str, config_path: str) -> dict:
 def save_config(configs: dict, config_path: str, data_path: str) -> None:
     """Save the configuration for a specific dataset.
 
+    dataset_path is intentionally omitted; load_config() reconstructs it
+    from the current DATA_PATH at read time.
+
     Args:
         configs: The configuration dictionary.
         config_path: The path to the configuration files.
-        data_path: The path to the data files.
+        data_path: Unused; retained for caller compatibility.
     """
+    del data_path
     data_name = configs["name"]
-    dataset_path = os.path.join(data_path, "datasets", data_name)
-    configs["dataset_path"] = dataset_path
-    configs["type"] = "region_based"
+    out = {k: v for k, v in configs.items() if k != "dataset_path"}
+    out["type"] = "region_based"
+    if not os.path.exists(config_path):
+        os.makedirs(config_path)
     config_file = os.path.join(config_path, data_name + ".yml")
     with open(config_file, "w") as f:
-        yaml.dump(configs, f, default_flow_style=False)
+        yaml.dump(out, f, default_flow_style=False)

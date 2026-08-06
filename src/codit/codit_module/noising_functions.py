@@ -1,6 +1,5 @@
 import jax
 import jax.numpy as jnp
-from flax import linen as nn
 from jax import random
 
 from codit.codit_module.brownian_noise_models import WalkNoiseModel

@@ -44,7 +44,11 @@ class ConvNet(nnx.Module):
             Linear2 (nnx.Linear): Output fully connected layer with 128 input features and 2 output features.
         """
         self.Conv1 = nnx.Conv(
-            in_features=in_features, out_features=16, kernel_size=(3, 3), strides=2, rngs=rngs
+            in_features=in_features,
+            out_features=16,
+            kernel_size=(3, 3),
+            strides=2,
+            rngs=rngs,
         )
         self.Conv2 = nnx.Conv(
             in_features=16, out_features=32, kernel_size=(3, 3), strides=2, rngs=rngs
@@ -81,9 +85,9 @@ def loss(model: ConvNet, context: jnp.ndarray, trajectory: jnp.ndarray) -> jnp.n
     Returns:
         jnp.ndarray: The mean squared error between the model's predicted increments and the true increments computed from the trajectory.
     """
-    true_increments = vmap(data_transform.velocity_vector_from_pos_time, in_axes=(0, 0, None))(
-        trajectory[:-1], trajectory[1:], 3600
-    )
+    true_increments = vmap(
+        data_transform.velocity_vector_from_pos_time, in_axes=(0, 0, None)
+    )(trajectory[:-1], trajectory[1:], 3600)
     increment_prediction = model(context)
     return jnp.mean(jnp.pow(increment_prediction - true_increments, 2))
 
@@ -104,13 +108,13 @@ def load_checkpoint(model: nnx.Module, ckpt_dir: str) -> nnx.Module:
         item_names=("state", "opt_state"),
     ) as ckpt_mgr:
         graphdef, abstract_state = nnx.split(model)
-        rngs_key = jax.tree.map(jax.random.key_data, abstract_state.filter(nnx.RngKey)) # type: ignore
-        merge_state(abstract_state, rngs_key) # type: ignore
+        rngs_key = jax.tree.map(jax.random.key_data, abstract_state.filter(nnx.RngKey))  # type: ignore
+        merge_state(abstract_state, rngs_key)  # type: ignore
 
         restored = ckpt_mgr.restore(
             1,
             args=ocp.args.Composite(
-                state=ocp.args.StandardRestore(abstract_state), # type: ignore
+                state=ocp.args.StandardRestore(abstract_state),  # type: ignore
             ),
         )
     state_restored = jax.device_put(restored["state"], jax.devices()[0])
@@ -118,8 +122,35 @@ def load_checkpoint(model: nnx.Module, ckpt_dir: str) -> nnx.Module:
 
 
 class ConvNetModel(BaseTrajectoryModel):
+    """Convolutional-neural-network velocity baseline.
 
-    def __init__(self, name: str, params: dict, load_ckpt: bool = True):
+    Regresses the drifter's next-step velocity vector directly from the local
+    context patch (currents, wind, bathymetry) with a small CNN. Trajectories
+    are integrated by converting the predicted velocity to a distance +
+    bearing and applying the inverse haversine formula, then repeating
+    hour-by-hour.
+
+    Prediction uncertainty is captured by Monte-Carlo dropout: the CNN keeps
+    its dropout layer active at inference time, so drawing ``num_samples``
+    trajectories yields distinct sample paths that reflect the model's
+    epistemic uncertainty. It serves as the "CNN baseline" in the paper.
+
+    Args:
+        name: Unique model identifier used as the checkpoint directory name.
+        params: Reserved for future extensions; currently only used for
+            checkpoint pathing.
+        load_ckpt: If ``True``, attempt to restore CNN parameters from an
+            existing checkpoint on construction.
+
+    Example::
+
+        model = ConvNetModel(
+            name="convnet_open_ocean",
+            params={"prediction_length": 72},
+        )
+    """
+
+    def __init__(self, name: str, params: dict, load_ckpt: bool = False):
         """
         Initializes the ConvNet model module.
 
@@ -132,10 +163,10 @@ class ConvNetModel(BaseTrajectoryModel):
             params (dict): The parameters for the model.
             model (ConvNet): The ConvNet model instance.
             ckpt_dir (str): Directory path for model checkpoints.
-            trained_sucessfully (bool): Indicates whether the model was successfully restored from a checkpoint.
+            trained_successfully (bool): Indicates whether the model was successfully restored from a checkpoint.
 
         Raises:
-            Exception: If restoring the model state from checkpoint fails, sets `trained_sucessfully` to False.
+            Exception: If restoring the model state from checkpoint fails, sets `trained_successfully` to False.
         """
         super().__init__(name, params)
         self.type = "conv_net"
@@ -147,20 +178,21 @@ class ConvNetModel(BaseTrajectoryModel):
         if load_ckpt:
             try:
                 self.model = load_checkpoint(self.model, self.ckpt_dir)
-                self.trained_sucessfully = True
+                self.trained_successfully = True
             except Exception as e:
                 print(f"Error restoring model state: {e}")
-                self.trained_sucessfully = False
+                self.trained_successfully = False
         else:
-            self.trained_sucessfully = False
+            self.trained_successfully = False
 
     def _fit(
         self,
         train_dataset: OceanTrainingDataset,
         val_dataset: OceanTrainingDataset,
-        train_params: dict = {},
+        train_params: dict | None = None,
     ) -> "ConvNetModel":
-
+        if train_params is None:
+            train_params = {}
         ckpt_dir = ocp.test_utils.erase_and_create_empty(self.ckpt_dir)
         train_dataset.set_context_var_idx(self.var_idx)
         train_dataloader = data.DataLoader(
@@ -168,9 +200,24 @@ class ConvNetModel(BaseTrajectoryModel):
         )
         val_dataset.set_context_var_idx(self.var_idx)
         val_dataloader = data.DataLoader(
-            val_dataset, batch_size=train_params.get("batch_size", 128), shuffle=False
+            val_dataset, batch_size=train_params.get("batch_size", 32), shuffle=False
         )
         optimizer = nnx.Optimizer(self.model, optax.adam(train_params.get("lr", 1e-3)))
+
+        state_axes = nnx.StateAxes({"Dropout": 0, ...: None})
+
+        @nnx.split_rngs(splits=train_params.get("batch_size", 32), only="dropout")
+        @nnx.vmap(
+            in_axes=(
+                state_axes,
+                0,
+            ),  # model is not vmapped, x is vmapped, train is not vmapped
+            out_axes=0,  # Output is vmapped
+        )
+        def batched_apply(model, x: jnp.ndarray):
+            """Applies the model to a batch of inputs."""
+            # NNX will handle the state and RNGs of the model instance passed to this function.
+            return model(x)
 
         @nnx.jit
         def train_step(
@@ -183,14 +230,17 @@ class ConvNetModel(BaseTrajectoryModel):
                 model: nnx.Module, trajectory: jnp.ndarray, context: jnp.ndarray
             ) -> jnp.ndarray:
                 true_increments = vmap(
-                    vmap(data_transform.velocity_vector_from_pos_time, in_axes=(0, 0, None)),
+                    vmap(
+                        data_transform.velocity_vector_from_pos_time,
+                        in_axes=(0, 0, None),
+                    ),
                     in_axes=(0, 0, None),
                 )(trajectory[:, :-1], trajectory[:, 1:], 3600)
-                increment_prediction = vmap(model)(context[:, :-1]) # type: ignore
+                increment_prediction = batched_apply(model, context[:, :-1])  # type: ignore
                 return jnp.mean(jnp.pow(increment_prediction - true_increments, 2))
 
             loss, grad = nnx.value_and_grad(loss_fn)(model, trajectory, context)
-            optimizer = optimizer.update(grad) # type: ignore
+            optimizer = optimizer.update(grad)  # type: ignore
             return loss
 
         @nnx.jit
@@ -199,10 +249,13 @@ class ConvNetModel(BaseTrajectoryModel):
         ) -> jnp.ndarray:
             def loss_fn(model: nnx.Module) -> jnp.ndarray:
                 true_increments = vmap(
-                    vmap(data_transform.velocity_vector_from_pos_time, in_axes=(0, 0, None)),
+                    vmap(
+                        data_transform.velocity_vector_from_pos_time,
+                        in_axes=(0, 0, None),
+                    ),
                     in_axes=(0, 0, None),
                 )(trajectory[:, :-1], trajectory[:, 1:], 3600)
-                increment_prediction = vmap(model)(context[:, :-1]) # type: ignore
+                increment_prediction = batched_apply(model, context[:, :-1])  # type: ignore
                 return jnp.mean(jnp.pow(increment_prediction - true_increments, 2))
 
             loss = loss_fn(model)
@@ -214,6 +267,7 @@ class ConvNetModel(BaseTrajectoryModel):
             min_delta=train_params.get("min_delta", 0.001),
             patience=train_params.get("patience", 5),
         )
+        self.model.train()
         for epoch in range(num_epochs):
             for i, batch in tqdm(enumerate(train_dataloader)):
                 trajectory, context = jnp.asarray(batch[0]), jnp.asarray(batch[1])
@@ -226,22 +280,24 @@ class ConvNetModel(BaseTrajectoryModel):
                 item_names=("state", "opt_state"),
             ) as ckpt_mgr:
                 _, state = nnx.split(self.model)
-                rngs_key = jax.tree.map(jax.random.key_data, state.filter(nnx.RngKey)) # type: ignore
-                merge_state(state, rngs_key) # type: ignore
+                rngs_key = jax.tree.map(jax.random.key_data, state.filter(nnx.RngKey))  # type: ignore
+                merge_state(state, rngs_key)  # type: ignore
 
                 _, opt_state = nnx.split(optimizer.opt_state)
                 ckpt_mgr.save(
                     1,
                     args=ocp.args.Composite(
-                        state=ocp.args.StandardSave(state), # type: ignore
-                        opt_state=ocp.args.StandardSave(opt_state), # type: ignore
+                        state=ocp.args.StandardSave(state),  # type: ignore
+                        opt_state=ocp.args.StandardSave(opt_state),  # type: ignore
                     ),
                 )
-            val_loss = 0
-            for i, batch in tqdm(enumerate(val_dataloader)):
+            val_loss = 0.0
+            n_val = 0
+            for batch in tqdm(val_dataloader):
                 trajectory, context = jnp.asarray(batch[0]), jnp.asarray(batch[1])
                 val_loss += eval_step(self.model, trajectory, context)
-            val_loss /= i * batch[0].shape[0] * batch[0].shape[1]
+                n_val += batch[0].shape[0] * batch[0].shape[1]
+            val_loss /= n_val
             early_stop.update(val_loss)
 
             if early_stop.should_stop:
@@ -261,7 +317,29 @@ class ConvNetModel(BaseTrajectoryModel):
         test_dataset: OceanDataset,
         num_samples: int = 1,
     ) -> jnp.ndarray:
-        
+        """Roll the CNN velocity model forward from ``start_position``.
+
+        For each of ``prediction_length`` hours: extract the context patch at
+        the current position, predict a velocity vector, convert it to a
+        1-hour distance + bearing, and step forward via inverse haversine.
+        Dropout stays active during prediction, so each of the ``num_samples``
+        sample trajectories draws its own MC-dropout mask and produces a
+        distinct path — this is how the CNN baseline models uncertainty.
+
+        Args:
+            start_position: ``(2,)`` array of ``(lat, lon)`` degrees at t=0.
+            start_time: Wall-clock start time; determines which context slices
+                the interpolator reads.
+            prediction_length: Number of future hours to predict.
+            interpolator: 3-D interpolator for the context fields.
+            test_dataset: Dataset providing ``get_context`` (context extraction).
+            num_samples: Number of Monte-Carlo dropout trajectories to draw.
+
+        Returns:
+            ``(num_samples, prediction_length, 2)`` array of predicted
+            ``(lat, lon)`` positions, excluding the start position.
+        """
+
         times = self._get_prediction_steps(start_time, prediction_length)
         num_preds = num_samples
         cur_coord = jnp.array([start_position])
@@ -282,10 +360,12 @@ class ConvNetModel(BaseTrajectoryModel):
                 context = test_dataset.get_context(
                     jnp.array([t]), cur_coord, interpolator
                 )[..., self.var_idx]
-                pred_vel = model(context) # type: ignore
-                speed, bearing = data_transform.velocity_to_distance_bearing(pred_vel[0])
+                pred_vel = model(context)  # type: ignore
+                speed, bearing = data_transform.velocity_to_distance_bearing(
+                    pred_vel[0]
+                )
                 new_coord = data_transform.inverse_haversine(
-                    cur_coord[0], 3600 * speed, bearing     # type: ignore
+                    cur_coord[0], 3600 * speed, bearing  # type: ignore
                 )
                 return (
                     model,
@@ -307,9 +387,10 @@ class ConvNetModel(BaseTrajectoryModel):
         )(self.model, jnp.arange(num_preds))
 
         return pred_coords
-    
-    
-    def export_trained_model(self, model_name: str | None= None, export_path: str|None = None) -> None:
+
+    def export_trained_model(
+        self, model_name: str | None = None, export_path: str | None = None
+    ) -> None:
         """
         Exports the trained model to a specified path.
 
@@ -320,30 +401,34 @@ class ConvNetModel(BaseTrajectoryModel):
         Raises:
             ValueError: If the model parameters are not set.
         """
-        
+
         if model_name is None:
             model_name = self.name
         if export_path is None:
             export_path = os.path.join(config_paths.MODEL_PATH, "trained_models")
-        
+
         model_path = os.path.join(export_path, model_name)
         if not os.path.exists(model_path):
             os.makedirs(model_path)
         else:
-            raise Exception(f"Model {model_name} already exists at {model_path}. Please delete it or change the model name.")
+            raise Exception(
+                f"Model {model_name} already exists at {model_path}. Please delete it or change the model name."
+            )
 
-        #nn_params_path = os.path.join(model_path, "nn_params.npz")
-        #jnp.savez(nn_params_path, params=self.nn_params, allow_pickle=True)
+        # nn_params_path = os.path.join(model_path, "nn_params.npz")
+        # jnp.savez(nn_params_path, params=self.nn_params, allow_pickle=True)
         with open(os.path.join(model_path, "model_config.yml"), "w") as f:
             yaml.dump(self.params, f, default_flow_style=False)
-            
+
         nnx_model_path = os.path.join(model_path, "nnx_model.pkl")
         graph, state = nnx.split(self.model)
         with open(nnx_model_path, "wb") as f:
             pickle.dump(state, f)
-            
+
     @classmethod
-    def import_trained_model(cls, model_name: str, import_path: str | None = None) -> "ConvNetModel":
+    def import_trained_model(
+        cls, model_name: str, import_path: str | None = None
+    ) -> "ConvNetModel":
         """
         Imports a trained ConvNet model from the specified path.
 
@@ -356,14 +441,16 @@ class ConvNetModel(BaseTrajectoryModel):
         """
         if import_path is None:
             import_path = os.path.join(config_paths.MODEL_PATH, "trained_models")
-        
+
         model_path = os.path.join(import_path, model_name)
         with open(os.path.join(model_path, "model_config.yml"), "r") as f:
             model_config = yaml.safe_load(f)
-        
+
         nnx_model_path = os.path.join(model_path, "nnx_model.pkl")
         if not os.path.exists(nnx_model_path):
-            raise FileNotFoundError(f"NNX parameters file {nnx_model_path} does not exist.")
+            raise FileNotFoundError(
+                f"NNX parameters file {nnx_model_path} does not exist."
+            )
 
         with open(nnx_model_path, "rb") as f:
             state = pickle.load(f)
@@ -371,6 +458,5 @@ class ConvNetModel(BaseTrajectoryModel):
         model = cls(model_name, model_config, load_ckpt=False)
         graph, _ = nnx.split(model.model)
         model.model = nnx.merge(graph, state)
-        model.trained_sucessfully = True
+        model.trained_successfully = True
         return model
-        

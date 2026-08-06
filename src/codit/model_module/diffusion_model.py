@@ -3,12 +3,12 @@ import os
 import pickle
 import shutil
 import warnings
+from typing import Callable, Optional
 
 # Suppress the SerializationWarning
 from functools import partial
 
 import jax
-import numpy as np
 import optax
 import orbax.checkpoint
 import orbax.checkpoint as ocp
@@ -37,14 +37,13 @@ from codit.codit_module.brownian_noise_models import (
 
 # Suppress the SerializationWarning
 from codit.data_module import config_paths, data_transform
+from codit.data_module.data_transform import transform_traj_to_metre
 from codit.data_module.dataset import OceanDataset, OceanTrainingDataset
 from codit.model_module.base_model import BaseTrajectoryModel
 
 warnings.filterwarnings("ignore", category=xr.SerializationWarning)
-np.random.seed(0)
 
 # config.update("jax_enable_x64", True)
-warnings.filterwarnings(action="ignore")
 
 
 def backward_denoising_step(
@@ -152,7 +151,7 @@ def denoise(
     # step_func = lambda carry, i: backward_denoising_step(
     #     carry, i, W, batch, schedule_dict, noise_model, model, params
     # )
-    denoise_results = lax.scan(step_func, init, iterations) # type: ignore
+    denoise_results = lax.scan(step_func, init, iterations)  # type: ignore
     y = denoise_results[0][1]
     denoising_steps = denoise_results[1]
     return y, denoising_steps
@@ -190,9 +189,70 @@ def restore_checkpoint(ckpt_file: str) -> tuple[nn.Module, list, list, jnp.ndarr
 
 
 class CoDiTModel(BaseTrajectoryModel):
+    """Conditional denoising diffusion model for ocean drifter trajectory prediction.
+
+    CoDiT frames trajectory generation as a reverse diffusion process conditioned on
+    spatiotemporal ocean context (currents, wind, bathymetry). At inference time it
+    draws ``num_samples`` trajectory samples from the learned conditional distribution
+    by running K reverse-diffusion steps.
+
+    Supported denoiser architectures (``params["model_type"]``):
+
+    - ``"GRU"``: autoregressive GRU denoiser (default, faster to train)
+    - ``"Transformer"``: autoregressive Transformer denoiser (more expressive)
+
+    Args:
+        name: Unique model identifier used as the checkpoint directory name.
+        params: Model hyperparameters. Unset keys fall back to internal defaults:
+
+            - ``prediction_length`` (int): number of trajectory steps to predict (**required**)
+            - ``dt`` (float): time step in fractional days (default ``0.1``; set to ``1/prediction_length``)
+            - ``model_type`` (str): ``"GRU"`` or ``"Transformer"`` (default ``"GRU"``)
+            - ``context_encoder_type`` (str): ``"conv"``, ``"mlp"``, or ``"gap"`` (default ``"conv"``)
+            - ``K`` (int): number of diffusion steps (default ``100``)
+            - ``num_layers`` (int): GRU/Transformer depth (default ``2``)
+            - ``hidden_dims`` (int): hidden state dimensionality (default ``64``)
+            - ``diffusion_emb`` (int): diffusion-timestep embedding size (default ``64``)
+            - ``vars`` (list[str]): context variable names used to select ``var_idx``
+            - ``noise`` (str): noise model type, ``"brownian_motion"`` (default)
+            - ``beta_min`` / ``beta_max`` (float): diffusion schedule bounds (defaults ``1e-4`` / ``0.02``)
+
+    Example::
+
+        model = CoDiTModel(
+            name="codit_GRU_open_ocean",
+            params={
+                "prediction_length": 72,
+                "dt": 1 / 72,
+                "model_type": "GRU",
+                "context_encoder_type": "conv",
+                "K": 100,
+                "vars": ["hycom_current", "copernicus_current", "era5_wind", "bathymetry"],
+            },
+        )
+    """
 
     def __init__(self, name: str, params: dict) -> None:
-        
+        """Initialise a CoDiT diffusion model.
+
+        See the class docstring for the full list of supported ``params`` keys.
+        Unset keys fall back to the internal defaults; ``prediction_length`` and
+        ``vars`` are the only keys the caller is expected to always provide.
+
+        Args:
+            name: Unique model identifier; also the checkpoint subdirectory name
+                under ``config_paths.MODEL_PATH/ckpts/``.
+            params: Hyperparameter dictionary. See class docstring for details.
+
+        Attributes set:
+            type (str): Always ``"diffusion"``.
+            model (nn.Module): Flax denoiser (GRU or Transformer).
+            noise_model (WalkNoiseModel): Brownian noise process.
+            schedule_dict (dict): Precomputed linear beta schedule for K steps.
+            ckpt_dir (str): Absolute path to the model's checkpoint directory.
+            nn_params: Set to ``None`` at construction; populated by ``fit`` or
+                ``import_trained_model``.
+        """
         self.type = "diffusion"
 
         default_params = {
@@ -268,6 +328,7 @@ class CoDiTModel(BaseTrajectoryModel):
             T=prediction_length * dt,  # type: ignore
         )
         self.nn_params = None
+        self._denoise_func: Optional[Callable] = None  # cached jit-compiled step function
 
     def center_and_scale_data(self, trajectory: jnp.ndarray) -> jnp.ndarray:
         if len(trajectory.shape) == 2:
@@ -282,20 +343,39 @@ class CoDiTModel(BaseTrajectoryModel):
             start = trajectory[:, 0]
         return (trajectory - start) / self.std + start
 
-    def fit(
-        self,
-        train_dataloader: OceanTrainingDataset,
-        val_dataloader: OceanTrainingDataset,
-        train_params: dict = {},
-    ) -> "CoDiTModel":
-        return self._fit(train_dataloader, val_dataloader, train_params)
-
     def _fit(
         self,
         train_dataset: OceanTrainingDataset,
         val_dataset: OceanTrainingDataset,
-        train_params: dict = {},
+        train_params: dict | None = None,
     ) -> "CoDiTModel":
+        """Train CoDiT via denoising score matching.
+
+        Iterates ``num_epochs`` epochs of ``num_batches_per_epoch`` gradient steps.
+        Each step samples a batch, applies the forward diffusion process, predicts
+        the noise with the denoiser, and minimises the MSE between predicted and
+        true noise. Early stopping is applied on the validation loss.
+
+        Args:
+            train_dataset: Training split with trajectories and context arrays loaded.
+            val_dataset: Validation split used for early stopping.
+            train_params: Training hyperparameters. Supported keys:
+
+                - ``num_epochs`` (int): maximum training epochs (default ``1000``)
+                - ``num_batches_per_epoch`` (int): gradient steps per epoch (default ``100``)
+                - ``batch_size`` (int): samples per gradient step (default ``128``)
+                - ``learning_rate`` (float): initial learning rate (default ``1e-4``)
+                - ``optimizer`` (str): ``"adam"``, ``"adamw"``, or ``"sgd"`` (default ``"adam"``)
+                - ``scheduler``: an ``optax`` schedule instance or ``None`` for constant LR
+                - ``early_stopping_patience`` (int): val-epochs without improvement before stopping (default ``10``)
+                - ``early_stopping_min_delta`` (float): minimum improvement threshold (default ``1e-4``)
+                - ``force_retrain`` (bool): retrain even if a checkpoint already exists (default ``False``)
+
+        Returns:
+            self, with ``nn_params`` populated and ``trained_successfully`` set to ``True``.
+        """
+        if train_params is None:
+            train_params = {}
         # return self
         default_train_params = {
             "seed": 0,
@@ -307,21 +387,18 @@ class CoDiTModel(BaseTrajectoryModel):
             "learning_rate": 1e-4,
             "optimizer": "adam",
             "scheduler": None,
+            "early_stopping_patience": 10,
+            "early_stopping_min_delta": 1e-4,
+            "val_batch_size": 128,
         }
-
-        # todo: This is not very nice, should happen in the dataset or more downstream
-        def transform_traj_to_metre(traj: jnp.ndarray) -> jnp.ndarray:
-            velocity_vectors = vmap(
-                data_transform.velocity_vector_from_pos_time, in_axes=(None, 0, None)
-            )(traj[0], traj, 3600)
-            traj_in_metres = velocity_vectors * 3600
-            return traj_in_metres
 
         # assert isinstance(train_dataset.trajectories, jnp.ndarray), (
         #     "Trajectories should be a jnp.ndarray, "
         #     "but got: {}".format(type(train_dataset.trajectories))
         # )
-        traj_in_metres = vmap(transform_traj_to_metre)(jnp.asarray(train_dataset.trajectories))
+        traj_in_metres = vmap(transform_traj_to_metre)(
+            jnp.asarray(train_dataset.trajectories)
+        )
         self.std = jnp.std(traj_in_metres[:, -1], axis=0)
         train_dataset.set_context_var_idx(self.var_idx)
         train_dataloader = data.DataLoader(
@@ -334,7 +411,12 @@ class CoDiTModel(BaseTrajectoryModel):
         )
         val_dataset.set_context_var_idx(self.var_idx)
         val_dataloader = data.DataLoader(
-            val_dataset, batch_size=128, shuffle=False, drop_last=True
+            val_dataset,
+            batch_size=train_params.get(
+                "val_batch_size", default_train_params["val_batch_size"]
+            ),
+            shuffle=False,
+            drop_last=True,
         )
         num_epochs = train_params.get("num_epochs", default_train_params["num_epochs"])
         # num_batches_per_epoch = train_params.get('num_batches_per_epoch', default_train_params['num_batches_per_epoch'])
@@ -420,6 +502,10 @@ class CoDiTModel(BaseTrajectoryModel):
                 val_loss_list=val_loss_list,
                 writer=writer,
                 std=self.std,
+                early_stopping_patience=train_params.get("early_stopping_patience", 10),
+                early_stopping_min_delta=train_params.get(
+                    "early_stopping_min_delta", 1e-4
+                ),
             )
             writer.close()
             print("storing", self.ckpt_dir)
@@ -439,6 +525,7 @@ class CoDiTModel(BaseTrajectoryModel):
                 std=self.std,
             )
             self.nn_params = params
+            self._denoise_func = None  # invalidate cached jit (nn_params changed)
         return self
 
     def load_trained_model(self) -> None:
@@ -447,8 +534,8 @@ class CoDiTModel(BaseTrajectoryModel):
             os.path.join(self.ckpt_dir, "final", "params.npz"), allow_pickle=True
         )
         self.nn_params = trained_model["params"]
+        self._denoise_func = None  # invalidate cached jit (nn_params changed)
         self.std = trained_model["std"]
-
 
     def predict(
         self,
@@ -461,12 +548,33 @@ class CoDiTModel(BaseTrajectoryModel):
         key: jax.Array = random.PRNGKey(0),
         return_denoising_steps: bool = False,
     ) -> jnp.ndarray | tuple[jnp.ndarray, jnp.ndarray]:
+        """Sample trajectory predictions from the trained diffusion model.
 
+        Runs the full K-step reverse diffusion chain independently ``num_samples`` times,
+        each starting from a different Brownian-motion initialisation.
+
+        Args:
+            start_position: Lat/lon of the drifter at ``start_time``, shape ``(2,)`` in decimal degrees.
+            start_time: Absolute UTC datetime for the first prediction step.
+            prediction_length: Number of hourly time steps to predict.
+            interpolator: Pre-built ``interpax.Interpolator3D`` covering the spatial and
+                temporal domain of the prediction window.
+            test_dataset: ``OceanDataset`` providing context feature extraction via ``get_context()``.
+            num_samples: Number of independent trajectory samples to draw.
+            key: JAX PRNG key used for reproducible noise sampling.
+            return_denoising_steps: If ``True``, also return the intermediate denoising
+                trajectory of shape ``(num_samples, K, prediction_length, 2)``.
+
+        Returns:
+            Predicted trajectories as ``jnp.ndarray`` of shape ``(num_samples, prediction_length, 2)``
+            in decimal degrees (lat, lon). If ``return_denoising_steps=True``, returns a tuple
+            ``(trajectories, denoising_steps)``.
+        """
         times = self._get_prediction_steps(start_time, prediction_length)
         prediction_length = len(times) - 1
         start_context = test_dataset.get_context(
             times[:1], start_position[None], interpolator
-        )[...,self.var_idx]
+        )[..., self.var_idx]
         coords_denoised = [start_position]
 
         key, subkey = random.split(key)
@@ -479,7 +587,9 @@ class CoDiTModel(BaseTrajectoryModel):
         keys = random.split(key, num_samples + 1)
         key, subkeys = keys[0], keys[1:]
 
-        def get_noise_model(key: jax.Array, prediction_length: int) -> tuple[jnp.ndarray, jnp.ndarray]:
+        def get_noise_model(
+            key: jax.Array, prediction_length: int
+        ) -> tuple[jnp.ndarray, jnp.ndarray]:
             keys = random.split(key, K + 1)
             key, subkeys = keys[0], keys[1:]
             return vmap(self.noise_model, in_axes=(0, None))(subkeys, prediction_length)
@@ -492,42 +602,56 @@ class CoDiTModel(BaseTrajectoryModel):
             subkeys, prediction_length
         )
 
-        @partial(vmap, in_axes=(0, 0, 0, 0, None, None))
-        def get_denoised_trajectory(
-            key: jax.Array,
-            W: jnp.ndarray,
-            initial_y: jnp.ndarray,
-            batch: dict,
-            numeric_time: jnp.ndarray,
-            i: int,
-        ) -> tuple[jnp.ndarray, jnp.ndarray] | tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
-            denoised, denoised_steps = denoise(
-                self.nn_params,  # type: ignore
-                initial_y,
-                batch,
-                self.model,
-                W,
-                self.noise_model,
-                key,
-                self.schedule_dict,
-            )
-            denoised_scaled = denoised * self.std
-            distance_in_metres = jnp.sqrt(
-                denoised_scaled[:, 0] ** 2 + denoised_scaled[:, 1] ** 2
-            )
-            bearing_angle = jnp.arctan2(denoised_scaled[:, 1], denoised_scaled[:, 0])
-            bearing_angle = jnp.degrees(bearing_angle)
-            dcoord = data_transform.inverse_haversine_grad(
-                start_position, distance_in_metres[i], bearing_angle[i]
-            )
-            new_coord = start_position[None] + dcoord
-            new_context = test_dataset.get_context(
-                numeric_time, new_coord, interpolator
-            )[..., self.var_idx]
-            if return_denoising_steps:
-                return new_coord, new_context, denoised_steps
-            else:
-                return new_coord, new_context
+        if self._denoise_func is None or return_denoising_steps:
+            @partial(vmap, in_axes=(0, 0, 0, 0, None, None, None, None))
+            def _get_denoised_trajectory(
+                key: jax.Array,
+                W: jnp.ndarray,
+                initial_y: jnp.ndarray,
+                batch: dict,
+                numeric_time: jnp.ndarray,
+                i: jax.Array,
+                start_pos: jnp.ndarray,
+                interp: Interpolator3D,
+            ) -> tuple:
+                denoised, denoised_steps = denoise(
+                    self.nn_params,  # type: ignore
+                    initial_y,
+                    batch,
+                    self.model,
+                    W,
+                    self.noise_model,
+                    key,
+                    self.schedule_dict,
+                )
+                denoised_scaled = denoised * self.std
+                distance_in_metres = jnp.sqrt(
+                    denoised_scaled[:, 0] ** 2 + denoised_scaled[:, 1] ** 2
+                )
+                bearing_angle = jnp.arctan2(denoised_scaled[:, 1], denoised_scaled[:, 0])
+                bearing_angle = jnp.degrees(bearing_angle)
+                dcoord = data_transform.inverse_haversine_grad(
+                    start_pos,
+                    jax.lax.dynamic_index_in_dim(distance_in_metres, i, axis=0, keepdims=False),
+                    jax.lax.dynamic_index_in_dim(bearing_angle, i, axis=0, keepdims=False),
+                )
+                new_coord = start_pos[None] + dcoord
+                new_context = test_dataset.get_context(
+                    numeric_time, new_coord, interp
+                )[..., self.var_idx]
+                # NOTE: return_denoising_steps is a Python bool resolved at trace
+                # time. This function is never cached (self._denoise_func) when
+                # return_denoising_steps=True, so the two return arities are safe.
+                if return_denoising_steps:
+                    return new_coord, new_context, denoised_steps
+                else:
+                    return new_coord, new_context
+
+            denoise_func = jit(_get_denoised_trajectory)
+            if not return_denoising_steps:
+                self._denoise_func = denoise_func
+        else:
+            denoise_func = self._denoise_func
 
         keys = random.split(key, num_samples + 1)
         key, subkeys = keys[0], keys[1:]
@@ -540,15 +664,16 @@ class CoDiTModel(BaseTrajectoryModel):
             ),
         }
 
-        denoise_func = jit(get_denoised_trajectory)
         for i in range(1, prediction_length + 1):
             if return_denoising_steps:
                 new_coord, new_context, denoise_steps_scaled = denoise_func(
-                    subkeys, W, initial_y, batch, times[i : i + 1], i
+                    subkeys, W, initial_y, batch, times[i : i + 1], jnp.int32(i),
+                    start_position, interpolator,
                 )
             else:
                 new_coord, new_context = denoise_func(
-                    subkeys, W, initial_y, batch, times[i : i + 1], i
+                    subkeys, W, initial_y, batch, times[i : i + 1], jnp.int32(i),
+                    start_position, interpolator,
                 )
             coords_denoised.append(new_coord)
             batch["prediction_context"] = (
@@ -564,151 +689,77 @@ class CoDiTModel(BaseTrajectoryModel):
             distance_in_metres = jnp.sqrt(
                 denoised_steps_scaled[..., 0] ** 2 + denoised_steps_scaled[..., 1] ** 2
             )
-            bearing_angle = jnp.arctan2(denoised_steps_scaled[..., 1], denoised_steps_scaled[..., 0])
+            bearing_angle = jnp.arctan2(
+                denoised_steps_scaled[..., 1], denoised_steps_scaled[..., 0]
+            )
             bearing_angle = jnp.degrees(bearing_angle)
-            denoised_coords = vmap(vmap(vmap(data_transform.inverse_haversine, in_axes=(None, 0, 0)), in_axes=(None, 0, 0)), in_axes=(None, 0, 0))(start_position, distance_in_metres, bearing_angle)
+            denoised_coords = vmap(
+                vmap(
+                    vmap(data_transform.inverse_haversine, in_axes=(None, 0, 0)),
+                    in_axes=(None, 0, 0),
+                ),
+                in_axes=(None, 0, 0),
+            )(start_position, distance_in_metres, bearing_angle)
             return pred_coords[:, 1:], denoised_coords
         else:
             return pred_coords[:, 1:]
 
-    # def predict_steps(
-    #     self,
-    #     start_position: jnp.ndarray,
-    #     times: jnp.ndarray,
-    #     interpolator: Interpolator3D,
-    #     test_dataset: OceanTrainingDataset,
-    #     num_samples: int = 1,
-    #     key: random.PRNGKey = random.PRNGKey(0),
-    # ) -> jnp.ndarray:
+    def export_trained_model(
+        self, model_name: str | None = None, export_path: str | None = None
+    ) -> None:
+        """Save the model's neural-network parameters to a checkpoint directory.
 
-    #     prediction_length = len(times) - 1
-    #     start_context = test_dataset.get_context(
-    #         times[:1], start_position[None], interpolator
-    #     )
-    #     coords_denoised = [start_position]
-    #     key, subkey = random.split(key)
-    #     K = self.schedule_dict["K"]
-    #     batch = {
-    #         "history_target_vals": jnp.zeros((1, 2)),
-    #         "history_context": start_context,
-    #         "prediction_context": start_context[None],
-    #     }
-    #     keys = random.split(key, num_samples + 1)
-    #     key, subkeys = keys[0], keys[1:]
-
-    #     def get_noise_model(key: random.PRNGKey, prediction_length: int) -> jnp.ndarray:
-    #         keys = random.split(key, K + 1)
-    #         key, subkeys = keys[0], keys[1:]
-    #         return vmap(self.noise_model, in_axes=(0, None))(subkeys, prediction_length)
-
-    #     W, dW = vmap(get_noise_model, in_axes=(0, None))(subkeys, prediction_length)
-    #     # traj_samples = []
-    #     # denoising_steps = []
-    #     coords_denoised = [jnp.tile(start_position[None], (num_samples, 1, 1))]
-    #     keys = random.split(key, num_samples + 1)
-    #     key, subkeys = keys[0], keys[1:]
-    #     initial_y, _ = vmap(self.noise_model, in_axes=(0, None))(
-    #         subkeys, prediction_length
-    #     )
-
-    #     @partial(vmap, in_axes=(0, 0, 0, 0, None, None))
-    #     def get_denoised_trajectory(
-    #         key: jax.Array,
-    #         W: jnp.ndarray,
-    #         initial_y: jnp.ndarray,
-    #         batch: dict,
-    #         numeric_time: jnp.ndarray,
-    #         i: int,
-    #     ) -> tuple[jnp.ndarray, jnp.ndarray]:
-    #         denoised, denoised_steps = denoise(
-    #             self.params,
-    #             initial_y,
-    #             batch,
-    #             self.model,
-    #             W,
-    #             self.noise_model,
-    #             key,
-    #             self.schedule_dict,
-    #         )
-    #         denoised_scaled = denoised_steps * self.std
-    #         distance_in_metres = jnp.sqrt(
-    #             denoised_scaled[:, :, 0] ** 2 + denoised_scaled[:, :, 1] ** 2
-    #         )
-    #         bearing_angle = jnp.arctan2(
-    #             denoised_scaled[:, :, 1], denoised_scaled[:, :, 0]
-    #         )
-    #         bearing_angle = jnp.degrees(bearing_angle)
-    #         dcoord = data_transform.inverse_haversine_grad(
-    #             start_position, distance_in_metres[i], bearing_angle[i]
-    #         )
-    #         new_coord = start_position[None] + dcoord
-    #         new_context = test_dataset.get_context(
-    #             numeric_time, new_coord, interpolator
-    #         )
-    #         return new_coord, new_context
-
-    #     keys = random.split(key, num_samples + 1)
-    #     key, subkeys = keys[0], keys[1:]
-    #     coords_denoised = [jnp.tile(start_position[None], (num_samples, 1, 1))]
-    #     batch = {
-    #         "history_target_vals": jnp.zeros((num_samples, 1, 2)),
-    #         "history_context": jnp.tile(start_context[None], (num_samples, 1, 1, 1, 1)),
-    #         "prediction_context": jnp.tile(
-    #             start_context[None], (num_samples, prediction_length, 1, 1, 1)
-    #         ),
-    #     }
-
-    #     denoise_func = jit(get_denoised_trajectory)
-    #     for i in range(1, prediction_length + 1):
-    #         new_coord, new_context = denoise_func(
-    #             subkeys, W, initial_y, batch, times[i : i + 1], i
-    #         )
-    #         coords_denoised.append(new_coord)
-    #         batch["prediction_context"] = (
-    #             batch["prediction_context"].at[:, i : i + 1].set(new_context)
-    #         )  # jnp.concatenate([batch['prediction_context'], new_context], axis=1)
-    #         batch["history_target_vals"] = jnp.zeros((num_samples, 1, 2))
-    #         batch["history_context"] = jnp.tile(
-    #             start_context[None], (num_samples, 1, 1, 1, 1)
-    #         )
-    #     pred_coords = jnp.concatenate(coords_denoised, axis=1)
-    #     return pred_coords[:, 1:]
-    
-    def export_trained_model(self, model_name: str | None = None, export_path: str | None = None) -> None:
+        Args:
+            model_name: Checkpoint folder name. Defaults to ``self.name``.
+            export_path: Parent directory for the checkpoint. Defaults to
+                ``config_paths.MODEL_PATH``.
+        """
         if model_name is None:
             model_name = self.name
         if export_path is None:
             export_path = os.path.join(config_paths.MODEL_PATH, "trained_models")
-            
+
         model_path = os.path.join(export_path, model_name)
         if not os.path.exists(model_path):
             os.makedirs(model_path)
         else:
-            raise Exception(f"Model {model_name} already exists in {model_path}. Please delete it or change the model name.")
-        
+            raise Exception(
+                f"Model {model_name} already exists in {model_path}. Please delete it or change the model name."
+            )
+
         with open(os.path.join(model_path, "model_config.yml"), "w") as f:
             yaml.dump(self.params, f, default_flow_style=False)
-            
+
         # save nn_params and std
         nn_params_path = os.path.join(model_path, "nn_params.npz")
-        
+
         if self.nn_params is None:
-            raise ValueError("Model parameters (nn_params) are None. Train or load the model before exporting.")
-        #jnp.savez(nn_params_path, params=self.nn_params, std=self.std, allow_pickle=True)
+            raise ValueError(
+                "Model parameters (nn_params) are None. Train or load the model before exporting."
+            )
+        # jnp.savez(nn_params_path, params=self.nn_params, std=self.std, allow_pickle=True)
         with open(nn_params_path, "wb") as f:
             pickle.dump({"params": self.nn_params, "std": self.std}, f)
-    
+
     @classmethod
-    def import_trained_model(cls, model_name: str, import_path: str|None = None) -> "CoDiTModel":
-        """
-        Imports a trained model from the specified path.
+    def import_trained_model(
+        cls, model_name: str, import_path: str | None = None
+    ) -> "CoDiTModel":
+        """Restore a trained model from a checkpoint directory.
 
         Args:
-            model_name (str): The name of the model to import.
-            model_path (str): The path where the model is stored.
+            model_name: Name of the checkpoint directory to load.
+            import_path: Parent directory to search. Defaults to
+                ``config_paths.MODEL_PATH``.
 
         Returns:
-            DiffusionModel: An instance of the DiffusionModel class with the loaded parameters.
+            A ``CoDiTModel`` instance with parameters restored from the checkpoint.
+
+        Raises:
+            FileNotFoundError: If ``model_config.yml`` does not exist in the checkpoint
+                directory.
+            FileNotFoundError: If ``nn_params.npz`` does not exist in the checkpoint
+                directory.
         """
         if import_path is None:
             import_path = os.path.join(config_paths.MODEL_PATH, "trained_models")
@@ -716,22 +767,23 @@ class CoDiTModel(BaseTrajectoryModel):
         config_file = os.path.join(model_path, "model_config.yml")
         if not os.path.exists(config_file):
             raise FileNotFoundError(f"Configuration file {config_file} does not exist.")
-        
+
         with open(config_file, "r") as f:
             model_config = yaml.safe_load(f)
-        
+
         nn_params_path = os.path.join(model_path, "nn_params.npz")
         if not os.path.exists(nn_params_path):
-            raise FileNotFoundError(f"NN parameters file {nn_params_path} does not exist.")
-        
-        #nn_params = jnp.load(nn_params_path, allow_pickle=True)
+            raise FileNotFoundError(
+                f"NN parameters file {nn_params_path} does not exist."
+            )
+
+        # nn_params = jnp.load(nn_params_path, allow_pickle=True)
         with open(nn_params_path, "rb") as f:
             nn_params = pickle.load(f)
-            
+
         model = cls(model_name, model_config)
         assert isinstance(nn_params, dict), "Loaded nn_params should be a dictionary."
         model.nn_params = nn_params["params"]
         model.std = nn_params["std"]
-        
+
         return model
-        
