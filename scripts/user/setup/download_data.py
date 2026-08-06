@@ -120,10 +120,10 @@ def main() -> None:
     if args.data_path:
         data_path = args.data_path
     else:
-        repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        data_path = os.environ.get(
-            "CODIT_DATA_PATH", os.path.join(repo_root, "data")
+        repo_root = os.path.dirname(
+            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         )
+        data_path = os.environ.get("CODIT_DATA_PATH", os.path.join(repo_root, "data"))
 
     print(f"Data directory: {data_path}")
 
