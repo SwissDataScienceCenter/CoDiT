@@ -25,6 +25,7 @@ dependencies = [
     "cfgrib",
     "pyyaml",
     "xarray==2024.2.0",
+    "cftime",
     "pandas",
     "jax>=0.2.10",
     "jaxlib>=0.1.60",
