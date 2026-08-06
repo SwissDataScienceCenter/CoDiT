@@ -87,10 +87,12 @@ class CurrentsBaselineModel(BaseTrajectoryModel):
         self.type = f"{source}_model"
         self.model = CurrentsDriftDynamics(velocity_indices=_VELOCITY_INDICES[source])
 
-    def _fit(self, train_configs: list) -> "CurrentsBaselineModel":  # type: ignore[override]
-        self.model = CurrentsDriftDynamics(
-            velocity_indices=_VELOCITY_INDICES[self.source]
-        )
+    def _fit(
+        self,
+        train_dataloader,
+        val_dataloader,
+        train_params: dict | None = None,
+    ) -> "CurrentsBaselineModel":
         return self
 
     def _create_data(self, datasets: dict, trajectory_length: int) -> tuple:
