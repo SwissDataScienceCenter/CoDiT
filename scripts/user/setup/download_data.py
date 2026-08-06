@@ -55,8 +55,13 @@ def download_file(url: str, dest: str) -> None:
 def extract_tarball(path: str, dest: str) -> None:
     """Extract a .tar.gz archive and remove the tarball."""
     print(f"  Extracting {os.path.basename(path)} -> {dest}")
+    dest_abs = os.path.abspath(dest)
     with tarfile.open(path, "r:gz") as tar:
-        tar.extractall(path=dest)
+        for member in tar.getmembers():
+            member_path = os.path.abspath(os.path.join(dest_abs, member.name))
+            if not member_path.startswith(dest_abs + os.sep):
+                raise RuntimeError(f"Unsafe path in tar archive: {member.name}")
+        tar.extractall(path=dest_abs)
     os.remove(path)
 
 
