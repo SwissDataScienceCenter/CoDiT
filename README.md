@@ -3,7 +3,7 @@
 CoDiT is a conditional denoising diffusion framework for multi-day ocean drifter
 trajectory prediction. It forecasts the drift of floating objects on the ocean
 surface, conditioned on ocean currents (HYCOM, Copernicus/GLORYS), winds (ERA5),
-bathymetry (GEBCO), and initial GPS position.
+bathymetry (GEBCO), and initial GPS position. For more details check our [paper](https://iopscience.iop.org/article/10.1088/3049-4753/ae9bc5/meta).
 
 ## Quick Start
 
@@ -277,7 +277,18 @@ export CODIT_CREDENTIALS_PATH=/path/to/your/config.ini
 
 If you find this helpful, please cite:
 
-> [Citation to be added upon publication]
+```latex
+@article{Donner_2026,
+doi = {10.1088/3049-4753/ae9bc5},
+year = {2026},
+publisher = {IOP Publishing},
+volume = {2},
+number = {2},
+author = {Donner, Christian and Goshtasbpour, Shirin and Dalsasso, Emanuele and Romero, Mattia and Béchaz, Manon and Rußwurm, Marc and de Vries, Robin and Tuia, Devis and Volpi, Michele},
+title = {CoDiT: conditional diffusion models for multi-day ocean drifter trajectory prediction},
+journal = {Machine Learning: Earth},
+}
+```
 
 The datasets are archived on Zenodo:
 [10.5281/zenodo.21644091](https://doi.org/10.5281/zenodo.21644091).
