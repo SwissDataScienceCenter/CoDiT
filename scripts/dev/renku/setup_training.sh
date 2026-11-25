@@ -28,7 +28,8 @@
 #   bash scripts/dev/renku/setup_training.sh --dataset coastline --splits train
 #
 # Then train, e.g.:
-#   python scripts/user/train/codit_train.py --dataset open_ocean --prediction_length 72
+#   python scripts/user/train/codit_train.py --dataset open_ocean --prediction_length 72 \
+#       --input_vars hycom_current copernicus_current era5_wind
 
 set -euo pipefail
 
@@ -232,4 +233,10 @@ if [[ "${CODIT_DATA_PATH}" != "$REPO_ROOT/data" ]]; then
 fi
 
 log "Done. Train with:"
-echo "  python scripts/user/train/codit_train.py --dataset $DATASET --prediction_length $LENGTH"
+if [[ "$DATASET" == "open_ocean" ]]; then
+    # The shipped open_ocean checkpoints were trained without bathymetry.
+    echo "  python scripts/user/train/codit_train.py --dataset $DATASET --prediction_length $LENGTH \\"
+    echo "      --input_vars hycom_current copernicus_current era5_wind"
+else
+    echo "  python scripts/user/train/codit_train.py --dataset $DATASET --prediction_length $LENGTH"
+fi
