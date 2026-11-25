@@ -50,15 +50,27 @@ class TestConfigPaths:
             importlib.reload(config_paths)
             assert config_paths.CREDENTIALS_PATH == "/tmp/my_creds.ini"
 
-    def test_model_path_resolves_trained_models(self):
-        """MODEL_PATH/trained_models/ must point to data/trained_models/."""
-        with patch.dict(os.environ, {"CODIT_DATA_PATH": "/tmp/test_codit"}):
+    def test_model_path_independent_of_data_path(self):
+        """Checkpoints stay at <repo>/data/trained_models/ when the data moves,
+        so the shipped checkpoints are found with CODIT_DATA_PATH set."""
+        env = os.environ.copy()
+        env.pop("CODIT_MODEL_PATH", None)
+        env["CODIT_DATA_PATH"] = "/tmp/test_codit"
+        with patch.dict(os.environ, env, clear=True):
+            from codit.data_module import config_paths
+
+            importlib.reload(config_paths)
+            repo_data = os.path.join(config_paths._REPO_ROOT, "data")
+            assert config_paths.MODEL_PATH == repo_data
+            assert config_paths.DATA_PATH == "/tmp/test_codit"
+
+    def test_model_path_from_env_var(self):
+        with patch.dict(os.environ, {"CODIT_MODEL_PATH": "/tmp/test_models"}):
             from codit.data_module import config_paths
 
             importlib.reload(config_paths)
             trained = os.path.join(config_paths.MODEL_PATH, "trained_models")
-            assert trained == "/tmp/test_codit/trained_models"
-
+            assert trained == "/tmp/test_models/trained_models"
 
 class TestLoadConfig:
     """load_config must reconstruct dataset_path from current DATA_PATH."""
