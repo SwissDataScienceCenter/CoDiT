@@ -576,13 +576,16 @@ class CoDiTModel(BaseTrajectoryModel):
             train_params: Training hyperparameters. Supported keys:
 
                 - ``num_epochs`` (int): maximum training epochs (default ``1000``)
-                - ``num_batches_per_epoch`` (int): gradient steps per epoch (default ``100``)
+                - ``num_batches_per_epoch`` (int): gradient steps per epoch (default ``100``);
+                  the training data is cycled as needed, so this is exact
                 - ``batch_size`` (int): samples per gradient step (default ``128``)
                 - ``learning_rate`` (float): initial learning rate (default ``1e-4``)
                 - ``optimizer`` (str): ``"adam"``, ``"adamw"``, or ``"sgd"`` (default ``"adam"``)
                 - ``scheduler``: an ``optax`` schedule instance or ``None`` for constant LR
-                - ``early_stopping_patience`` (int): val-epochs without improvement before stopping (default ``10``)
-                - ``early_stopping_min_delta`` (float): minimum improvement threshold (default ``1e-4``)
+                - ``early_stopping_patience`` (int): epochs without improvement before stopping (default ``10``);
+                  the parameters of the best epoch are kept
+                - ``early_stopping_min_delta`` (float): minimum improvement of the mean val
+                  denoising MSE (absolute; default ``1e-4``)
                 - ``force_retrain`` (bool): retrain even if a checkpoint already exists (default ``False``)
 
         Returns:
@@ -710,6 +713,10 @@ class CoDiTModel(BaseTrajectoryModel):
                 key,
                 self.schedule_dict,
                 num_epochs=num_epochs,
+                num_batches_per_epoch=train_params.get(
+                    "num_batches_per_epoch",
+                    default_train_params["num_batches_per_epoch"],
+                ),
                 loss_list=loss_list,
                 checkpoint_mngr=mngr,
                 val_dataloader=val_dataloader,

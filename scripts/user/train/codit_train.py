@@ -8,6 +8,7 @@ from codit.data_module import config_paths
 from codit.data_module.dataset import OceanTrainingDataset
 from codit.model_module.diffusion_model import CoDiTModel
 import optax
+import torch
 
 if __name__ == "__main__":
 
@@ -71,6 +72,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     np.random.seed(args.seed)
+    torch.manual_seed(args.seed)  # DataLoader shuffling
     key = jax.random.PRNGKey(args.seed)
 
     print("Loading dataset")

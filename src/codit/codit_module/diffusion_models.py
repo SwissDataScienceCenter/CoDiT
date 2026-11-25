@@ -3,11 +3,11 @@ from typing import Optional
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import optax
 import orbax.checkpoint as ocp
 from flax import linen as nn
 from flax.core import FrozenDict
-from flax.training.early_stopping import EarlyStopping
 from jax import jit, random
 from orbax.checkpoint import CheckpointManager
 from torch.utils.data import DataLoader
@@ -549,25 +549,26 @@ def train_step(
     return (params, opt_state, key, loss), value
 
 
-def get_loss(
-    carry: tuple,
-    batch: dict,
-    model: nn.Module,
-    noise_model: WalkNoiseModel,
-    schedule_dict: dict,
-    K: int,
-    batch_size: int,
-) -> tuple:
-    params, opt_state, key, loss = carry
-    key, subkey = random.split(key)
-    k = random.randint(subkey, (batch_size, 1), 0, K)
-    keys = random.split(key, batch_size + 1)
-    key, subkey = keys[0], keys[1:]
-    value, _ = denoising_loss(
-        params, model, batch, k, subkey, schedule_dict, noise_model
-    )
-    loss += value
-    return (params, opt_state, key, loss), value
+def validation_k(batch_index: int, batch_size: int, K: int) -> jnp.ndarray:
+    """Diffusion steps for a validation batch, cycling through all K levels.
+
+    Sample ``j`` of batch ``i`` gets step ``(i * batch_size + j) % K``, so the val set
+    covers every noise level evenly and the same sample always sees the same level.
+    """
+    return ((batch_index * batch_size + jnp.arange(batch_size)) % K)[:, None]
+
+
+def _cycle(dataloader: DataLoader):
+    """Iterate over a DataLoader indefinitely (reshuffling on every pass)."""
+    while True:
+        yielded = False
+        for batch in dataloader:
+            yielded = True
+            yield batch
+        if not yielded:
+            raise ValueError(
+                "The training DataLoader is empty: the dataset is smaller than one batch."
+            )
 
 
 def train(
@@ -593,19 +594,33 @@ def train(
 ) -> tuple:
     """Train the denoiser, with early stopping on the val loss.
 
+    An epoch is exactly ``num_batches_per_epoch`` gradient steps; the training
+    DataLoader is cycled (and reshuffled) as often as needed, so the budget does
+    not depend on the dataset size. Losses are the mean denoising MSE per sample.
+
+    The val loss is deterministic: a fixed key and noise levels spread evenly over
+    all K steps (``validation_k``), so epochs can be compared directly. Training
+    stops after ``early_stopping_patience`` epochs without an improvement of more
+    than ``early_stopping_min_delta`` (absolute, in MSE), and the parameters of the
+    best epoch are returned.
+
     Args:
         aligned_context: ``False`` for the legacy context layout of older checkpoints.
+
+    Returns:
+        ``(best_params, opt_state, loss_list, val_loss_list)``; ``opt_state`` is the
+        optimizer state at the last epoch.
     """
     if loss_list is None:
         loss_list = []
     if val_loss_list is None:
         val_loss_list = []
+    assert isinstance(train_dataloader.batch_size, int), "Batch size must be an integer."
+    K = schedule_dict["K"]
+    key, val_key = random.split(key)
 
     @jit
     def step_func(carry: tuple, batch: dict) -> tuple:
-        assert isinstance(
-            train_dataloader.batch_size, int
-        ), "Batch size must be an integer."
         return train_step(
             carry,
             batch,
@@ -613,71 +628,53 @@ def train(
             noise_model,
             optimizer,
             schedule_dict,
-            schedule_dict["K"],
+            K,
             train_dataloader.batch_size,
         )
 
-    if val_dataloader is not None:
-
-        @jit
-        def get_loss_func(carry: tuple, batch: dict) -> tuple:
-            assert isinstance(
-                val_dataloader.batch_size, int
-            ), "Batch size must be an integer."
-            return get_loss(
-                carry,
-                batch,
-                model,
-                noise_model,
-                schedule_dict,
-                schedule_dict["K"],
-                val_dataloader.batch_size,
-            )
-
-    early_stop = EarlyStopping(
-        patience=early_stopping_patience, min_delta=early_stopping_min_delta
-    )
-    # train_loss = jnp.nan
-    val_loss = jnp.nan
-    # progress bar with losses
-    pbar = tqdm(total=num_epochs, desc="Training", dynamic_ncols=True)
-    assert isinstance(
-        train_dataloader.batch_size, int
-    ), "Batch size must be an integer."
-
-    for epoch in range(num_epochs):
-        carry = (params, opt_state, key, 0)
-        ibatch = 0
-        for batch in train_dataloader:
-            # batch.pop('forecast_start')
-            jax_batch = transform_batch(batch, std, aligned_context)
-            carry, _ = step_func(carry, jax_batch)
-            ibatch += 1
-            if ibatch > num_batches_per_epoch:
-                break
-        params, opt_state, key, loss = carry
-        loss_list.append(
-            float(loss) / train_dataloader.batch_size / num_batches_per_epoch
+    @jit
+    def val_loss_func(params, batch: dict, k: jnp.ndarray, keys: jax.Array):
+        return denoising_loss_value(
+            params, model, batch, k, keys, schedule_dict, noise_model
         )
-        loss_log = {"loss": loss_list[-1]}
+
+    def validate(params) -> float:
+        assert val_dataloader is not None
+        total, count = 0.0, 0
+        for i, batch in enumerate(val_dataloader):
+            jax_batch = transform_batch(batch, std, aligned_context)
+            n = jax_batch["prediction_target_vals"].shape[0]
+            k = validation_k(i, n, K)
+            keys = random.split(random.fold_in(val_key, i), n)
+            total += float(val_loss_func(params, jax_batch, k, keys)) * n
+            count += n
+        if count == 0:
+            raise ValueError("The validation DataLoader is empty.")
+        return total / count
+
+    best_metric, best_params, best_epoch, epochs_since_best = np.inf, params, -1, 0
+    train_iter = _cycle(train_dataloader)
+    pbar = tqdm(total=num_epochs, desc="Training", dynamic_ncols=True)
+    for epoch in range(num_epochs):
+        carry = (params, opt_state, key, 0.0)
+        for _ in range(num_batches_per_epoch):
+            jax_batch = transform_batch(next(train_iter), std, aligned_context)
+            carry, _ = step_func(carry, jax_batch)
+        params, opt_state, key, loss = carry
+        # each step adds the batch-mean MSE
+        loss_list.append(float(loss) / num_batches_per_epoch)
         if val_dataloader is not None:
-            assert isinstance(
-                val_dataloader.batch_size, int
-            ), "Batch size must be an integer."
-            carry = (params, opt_state, key, 0)
-            for batch in val_dataloader:
-                # batch.pop('forecast_start')
-                jax_batch = transform_batch(batch, std, aligned_context)
-                carry, _ = get_loss_func(carry, jax_batch)
-            params, opt_state, key, val_loss = carry
-            val_loss_list.append(
-                float(val_loss) / val_dataloader.batch_size / len(val_dataloader)
-            )
-            loss_log["val_loss"] = val_loss_list[-1]
-            early_stop = early_stop.update(val_loss_list[-1])
+            val_loss_list.append(validate(params))
+            metric = val_loss_list[-1]
         else:
-            early_stop = early_stop.update(loss_list[-1])
-        # wandb.log(loss_log)
+            metric = loss_list[-1]
+
+        if best_metric - metric > early_stopping_min_delta:
+            best_metric, best_params, best_epoch = metric, params, epoch
+            epochs_since_best = 0
+        else:
+            epochs_since_best += 1
+
         if checkpoint_mngr is not None:
             ckpt = {
                 "params": params,
@@ -686,21 +683,27 @@ def train(
                 "epoch": epoch,
             }
             checkpoint_mngr.save(epoch, args=ocp.args.StandardSave(ckpt))  # type: ignore
-        if early_stop.should_stop:
-            print(f"Early stopping at epoch {epoch}")
-            break
-        # print(f'Epoch {epoch} - val_loss: {val_loss_list[-1]} - train_loss: {loss_list[-1]}')
         if writer is not None:
             writer.add_scalar("Loss/train", loss_list[-1], epoch)
-            writer.add_scalar("Loss/val", val_loss_list[-1], epoch)
-        pbar.set_postfix(val_loss=val_loss_list[-1], train_loss=loss_list[-1])
+            if val_dataloader is not None:
+                writer.add_scalar("Loss/val", val_loss_list[-1], epoch)
+        postfix = {"train_loss": loss_list[-1], "best_epoch": best_epoch}
+        if val_dataloader is not None:
+            postfix["val_loss"] = val_loss_list[-1]
+        pbar.set_postfix(postfix)
         pbar.update(1)
-    return params, opt_state, loss_list, val_loss_list
+        if epochs_since_best >= early_stopping_patience:
+            print(f"Early stopping at epoch {epoch}")
+            break
+    pbar.close()
+    print(
+        f"Best epoch {best_epoch} ({(best_epoch + 1) * num_batches_per_epoch} steps), "
+        f"{'val' if val_dataloader is not None else 'train'} loss {best_metric:.5g}"
+    )
+    return best_params, opt_state, loss_list, val_loss_list
 
 
-@partial(jax.jit, static_argnums=(1, 6))
-@jax.value_and_grad
-def denoising_loss(
+def denoising_loss_value(
     params: FrozenDict,
     model: nn.Module,
     batch: dict,
@@ -748,3 +751,9 @@ def denoising_loss(
         params, y_noised[:, 1:], y_noised_history, batch, k
     )
     return jnp.mean((noise_true - noise_pred) ** 2)
+
+
+# Loss and gradients w.r.t. ``params`` (model and noise_model are static).
+denoising_loss = partial(jax.jit, static_argnums=(1, 6))(
+    jax.value_and_grad(denoising_loss_value)
+)
