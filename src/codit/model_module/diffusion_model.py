@@ -486,6 +486,8 @@ class CoDiTModel(BaseTrajectoryModel):
         )
         self.nn_params = None
         self._denoise_func: Optional[Callable] = None  # cached jit-compiled step function
+        # same, batched over trajectories; keyed by "interpolator shared across batch"
+        self._denoise_func_batch: dict[bool, Callable] | None = None
         self.aligned_context = bool(params["aligned_context"])
         self.set_sampler(
             params["sampler"], params["num_sampling_steps"], params["rho"]
@@ -523,7 +525,7 @@ class CoDiTModel(BaseTrajectoryModel):
         self._heun_indices = heun_step_indices(
             self.schedule_dict, num_sampling_steps, rho
         )
-        self._denoise_func = None  # invalidate cached jit (sampler changed)
+        self._denoise_func = self._denoise_func_batch = None  # invalidate cached jit (sampler changed)
 
     def center_and_scale_data(self, trajectory: jnp.ndarray) -> jnp.ndarray:
         if len(trajectory.shape) == 2:
@@ -722,7 +724,7 @@ class CoDiTModel(BaseTrajectoryModel):
                 aligned_context=self.aligned_context,
             )
             self.nn_params = params
-            self._denoise_func = None  # invalidate cached jit (nn_params changed)
+            self._denoise_func = self._denoise_func_batch = None  # invalidate cached jit (nn_params changed)
         return self
 
     def load_trained_model(self) -> None:
@@ -738,12 +740,137 @@ class CoDiTModel(BaseTrajectoryModel):
                 f"checkpoint {self.ckpt_dir} was trained with aligned_context={ckpt_aligned}, "
                 f"the model has aligned_context={self.aligned_context}: set it to match, or retrain")
         self.nn_params = trained_model["params"]
-        self._denoise_func = None  # invalidate cached jit (nn_params changed)
+        self._denoise_func = self._denoise_func_batch = None  # invalidate cached jit (nn_params changed)
         self.std = trained_model["std"]
 
     def _context_slot(self, i: int) -> int:
         """Slot in ``prediction_context`` of the context sampled at predicted position ``i``."""
         return i - 1 if self.aligned_context else i
+
+    def _prepare_rollout(
+        self,
+        start_position: jax.Array,
+        start_time: datetime.datetime,
+        prediction_length: int,
+        interpolator: Interpolator3D,
+        test_dataset: OceanDataset,
+        num_samples: int,
+        key: jax.Array,
+        initial_y: jnp.ndarray | None,
+    ) -> tuple:
+        """Eager per-trajectory setup shared by ``predict`` and ``predict_batch``.
+
+        Returns ``(times, start_context, W, subkeys, initial_y, batch)``: the
+        prediction time grid, the context at the start, the Brownian paths used
+        by the DDPM sampler, the per-sample PRNG keys of the reverse process,
+        the reverse-process starting state and the initial conditioning batch.
+        The PRNG splits are kept exactly as in the original ``predict``.
+        """
+        times = self._get_prediction_steps(start_time, prediction_length)
+        prediction_length = len(times) - 1
+        start_context = test_dataset.get_context(
+            times[:1], start_position[None], interpolator
+        )[..., self.var_idx]
+
+        key, _ = random.split(key)
+        K = self.schedule_dict["K"]
+        keys = random.split(key, num_samples + 1)
+        key, subkeys = keys[0], keys[1:]
+
+        def get_noise_model(
+            key: jax.Array, prediction_length: int
+        ) -> tuple[jnp.ndarray, jnp.ndarray]:
+            keys = random.split(key, K + 1)
+            key, subkeys = keys[0], keys[1:]
+            return vmap(self.noise_model, in_axes=(0, None))(subkeys, prediction_length)
+
+        W, _ = vmap(get_noise_model, in_axes=(0, None))(subkeys, prediction_length)
+        keys = random.split(key, num_samples + 1)
+        key, subkeys = keys[0], keys[1:]
+        sampled_y, _ = vmap(self.noise_model, in_axes=(0, None))(
+            subkeys, prediction_length
+        )
+        if initial_y is None:
+            initial_y = sampled_y
+        elif initial_y.shape != sampled_y.shape:
+            raise ValueError(
+                f"initial_y must have shape {sampled_y.shape}, got {initial_y.shape}"
+            )
+
+        keys = random.split(key, num_samples + 1)
+        key, subkeys = keys[0], keys[1:]
+        batch = {
+            "history_target_vals": jnp.zeros((num_samples, 1, 2)),
+            "history_context": jnp.tile(start_context[None], (num_samples, 1, 1, 1, 1)),
+            "prediction_context": jnp.tile(
+                start_context[None], (num_samples, prediction_length, 1, 1, 1)
+            ),
+        }
+        return times, start_context, W, subkeys, initial_y, batch
+
+    def _make_denoise_step(
+        self, test_dataset: OceanDataset, return_denoising_steps: bool
+    ) -> Callable:
+        """Build the per-hour step: full reverse diffusion, then the new position
+        and its context. Vectorised over samples; not yet jit-compiled."""
+
+        @partial(vmap, in_axes=(0, 0, 0, 0, None, None, None, None))
+        def _get_denoised_trajectory(
+            key: jax.Array,
+            W: jnp.ndarray,
+            initial_y: jnp.ndarray,
+            batch: dict,
+            numeric_time: jnp.ndarray,
+            i: jax.Array,
+            start_pos: jnp.ndarray,
+            interp: Interpolator3D,
+        ) -> tuple:
+            if self.sampler == "heun":
+                denoised, denoised_steps = heun_denoise(
+                    self.nn_params,  # type: ignore
+                    initial_y,
+                    batch,
+                    self.model,
+                    self.noise_model,
+                    key,
+                    self.schedule_dict,
+                    self._heun_indices,
+                )
+            else:
+                denoised, denoised_steps = denoise(
+                    self.nn_params,  # type: ignore
+                    initial_y,
+                    batch,
+                    self.model,
+                    W,
+                    self.noise_model,
+                    key,
+                    self.schedule_dict,
+                )
+            denoised_scaled = denoised * self.std
+            distance_in_metres = jnp.sqrt(
+                denoised_scaled[:, 0] ** 2 + denoised_scaled[:, 1] ** 2
+            )
+            bearing_angle = jnp.arctan2(denoised_scaled[:, 1], denoised_scaled[:, 0])
+            bearing_angle = jnp.degrees(bearing_angle)
+            dcoord = data_transform.inverse_haversine_grad(
+                start_pos,
+                jax.lax.dynamic_index_in_dim(distance_in_metres, i, axis=0, keepdims=False),
+                jax.lax.dynamic_index_in_dim(bearing_angle, i, axis=0, keepdims=False),
+            )
+            new_coord = start_pos[None] + dcoord
+            new_context = test_dataset.get_context(
+                numeric_time, new_coord, interp
+            )[..., self.var_idx]
+            # NOTE: return_denoising_steps is a Python bool resolved at trace
+            # time. This function is never cached (self._denoise_func) when
+            # return_denoising_steps=True, so the two return arities are safe.
+            if return_denoising_steps:
+                return new_coord, new_context, denoised_steps
+            else:
+                return new_coord, new_context
+
+        return _get_denoised_trajectory
 
     def predict(
         self,
@@ -787,117 +914,22 @@ class CoDiTModel(BaseTrajectoryModel):
             in decimal degrees (lat, lon). If ``return_denoising_steps=True``, returns a tuple
             ``(trajectories, denoising_steps)``.
         """
-        times = self._get_prediction_steps(start_time, prediction_length)
-        prediction_length = len(times) - 1
-        start_context = test_dataset.get_context(
-            times[:1], start_position[None], interpolator
-        )[..., self.var_idx]
-        coords_denoised = [start_position]
-
-        key, subkey = random.split(key)
-        K = self.schedule_dict["K"]
-        batch = {
-            "history_target_vals": jnp.zeros((1, 2)),
-            "history_context": start_context,
-            "prediction_context": start_context[None],
-        }
-        keys = random.split(key, num_samples + 1)
-        key, subkeys = keys[0], keys[1:]
-
-        def get_noise_model(
-            key: jax.Array, prediction_length: int
-        ) -> tuple[jnp.ndarray, jnp.ndarray]:
-            keys = random.split(key, K + 1)
-            key, subkeys = keys[0], keys[1:]
-            return vmap(self.noise_model, in_axes=(0, None))(subkeys, prediction_length)
-
-        W, dW = vmap(get_noise_model, in_axes=(0, None))(subkeys, prediction_length)
-        coords_denoised = [jnp.tile(start_position[None], (num_samples, 1, 1))]
-        keys = random.split(key, num_samples + 1)
-        key, subkeys = keys[0], keys[1:]
-        sampled_y, _ = vmap(self.noise_model, in_axes=(0, None))(
-            subkeys, prediction_length
+        times, start_context, W, subkeys, initial_y, batch = self._prepare_rollout(
+            start_position, start_time, prediction_length, interpolator,
+            test_dataset, num_samples, key, initial_y,
         )
-        if initial_y is None:
-            initial_y = sampled_y
-        elif initial_y.shape != sampled_y.shape:
-            raise ValueError(
-                f"initial_y must have shape {sampled_y.shape}, got {initial_y.shape}"
-            )
+        prediction_length = len(times) - 1
 
         if self._denoise_func is None or return_denoising_steps:
-            @partial(vmap, in_axes=(0, 0, 0, 0, None, None, None, None))
-            def _get_denoised_trajectory(
-                key: jax.Array,
-                W: jnp.ndarray,
-                initial_y: jnp.ndarray,
-                batch: dict,
-                numeric_time: jnp.ndarray,
-                i: jax.Array,
-                start_pos: jnp.ndarray,
-                interp: Interpolator3D,
-            ) -> tuple:
-                if self.sampler == "heun":
-                    denoised, denoised_steps = heun_denoise(
-                        self.nn_params,  # type: ignore
-                        initial_y,
-                        batch,
-                        self.model,
-                        self.noise_model,
-                        key,
-                        self.schedule_dict,
-                        self._heun_indices,
-                    )
-                else:
-                    denoised, denoised_steps = denoise(
-                        self.nn_params,  # type: ignore
-                        initial_y,
-                        batch,
-                        self.model,
-                        W,
-                        self.noise_model,
-                        key,
-                        self.schedule_dict,
-                    )
-                denoised_scaled = denoised * self.std
-                distance_in_metres = jnp.sqrt(
-                    denoised_scaled[:, 0] ** 2 + denoised_scaled[:, 1] ** 2
-                )
-                bearing_angle = jnp.arctan2(denoised_scaled[:, 1], denoised_scaled[:, 0])
-                bearing_angle = jnp.degrees(bearing_angle)
-                dcoord = data_transform.inverse_haversine_grad(
-                    start_pos,
-                    jax.lax.dynamic_index_in_dim(distance_in_metres, i, axis=0, keepdims=False),
-                    jax.lax.dynamic_index_in_dim(bearing_angle, i, axis=0, keepdims=False),
-                )
-                new_coord = start_pos[None] + dcoord
-                new_context = test_dataset.get_context(
-                    numeric_time, new_coord, interp
-                )[..., self.var_idx]
-                # NOTE: return_denoising_steps is a Python bool resolved at trace
-                # time. This function is never cached (self._denoise_func) when
-                # return_denoising_steps=True, so the two return arities are safe.
-                if return_denoising_steps:
-                    return new_coord, new_context, denoised_steps
-                else:
-                    return new_coord, new_context
-
-            denoise_func = jit(_get_denoised_trajectory)
+            denoise_func = jit(
+                self._make_denoise_step(test_dataset, return_denoising_steps)
+            )
             if not return_denoising_steps:
                 self._denoise_func = denoise_func
         else:
             denoise_func = self._denoise_func
 
-        keys = random.split(key, num_samples + 1)
-        key, subkeys = keys[0], keys[1:]
         coords_denoised = [jnp.tile(start_position[None], (num_samples, 1, 1))]
-        batch = {
-            "history_target_vals": jnp.zeros((num_samples, 1, 2)),
-            "history_context": jnp.tile(start_context[None], (num_samples, 1, 1, 1, 1)),
-            "prediction_context": jnp.tile(
-                start_context[None], (num_samples, prediction_length, 1, 1, 1)
-            ),
-        }
 
         for i in range(1, prediction_length + 1):
             if return_denoising_steps:
@@ -939,6 +971,115 @@ class CoDiTModel(BaseTrajectoryModel):
             return pred_coords[:, 1:], denoised_coords
         else:
             return pred_coords[:, 1:]
+
+    def predict_batch(
+        self,
+        start_positions: jax.Array,
+        start_times: list[datetime.datetime],
+        prediction_length: int,
+        interpolator: Interpolator3D | list[Interpolator3D],
+        test_dataset: OceanDataset,
+        num_samples: int = 1,
+        keys: jax.Array | None = None,
+        initial_y: jnp.ndarray | None = None,
+        on_step: Callable[[int], None] | None = None,
+    ) -> jnp.ndarray:
+        """Run ``predict`` for several trajectories at once.
+
+        Trajectory ``b`` gets exactly the computation of
+        ``predict(start_positions[b], start_times[b], ..., key=keys[b],
+        initial_y=initial_y[b])``: the same PRNG splits, noise paths and reverse
+        process. The trajectories are only evaluated side by side (one more
+        ``vmap``), which keeps the GPU busy instead of running the latency-bound
+        reverse process one trajectory at a time. Results agree with ``predict``
+        up to floating-point rounding.
+
+        Memory grows with ``B``: the conditioning batch holds
+        ``B * num_samples * prediction_length`` context grids, and per-trajectory
+        interpolators are stacked on the device (an ``OceanDataset`` item's
+        interpolator stores its data plus an 8x derivative array, ~0.7 GB for a
+        72 h open_ocean patch).
+
+        Args:
+            start_positions: Start lat/lon per trajectory, shape ``(B, 2)``.
+            start_times: ``B`` start datetimes.
+            prediction_length: Number of hourly time steps to predict.
+            interpolator: One ``Interpolator3D`` shared by all trajectories, or a
+                list with one per trajectory (as returned by ``OceanDataset``
+                items). Per-trajectory interpolators must have identical shapes,
+                i.e. come from the same patch and prediction length.
+            test_dataset: ``OceanDataset`` providing ``get_context()``.
+            num_samples: Samples per trajectory.
+            keys: One PRNG key per trajectory, shape ``(B, 2)`` (or typed keys of
+                shape ``(B,)``). Default: ``random.split(PRNGKey(0), B)``.
+            initial_y: Diagnostics only. Starting states, shape
+                ``(B, num_samples, prediction_length + 1, 2)``; see ``predict``.
+            on_step: Optional callback, called with the hour ``i`` after each of
+                the ``prediction_length`` autoregressive steps (e.g. to advance a
+                progress bar).
+
+        Returns:
+            Predicted trajectories, shape ``(B, num_samples, prediction_length, 2)``,
+            in decimal degrees (lat, lon).
+        """
+        n = len(start_times)
+        if keys is None:
+            keys = random.split(random.PRNGKey(0), n)
+        if start_positions.shape[0] != n or keys.shape[0] != n:
+            raise ValueError(
+                f"got {start_positions.shape[0]} start positions, {n} start times "
+                f"and {keys.shape[0]} keys; they must match"
+            )
+        if initial_y is not None and initial_y.shape[0] != n:
+            raise ValueError(f"initial_y has {initial_y.shape[0]} rows, expected {n}")
+        shared = not isinstance(interpolator, (list, tuple))
+        interps = [interpolator] * n if shared else list(interpolator)
+        if len(interps) != n:
+            raise ValueError(f"got {len(interps)} interpolators for {n} trajectories")
+
+        prepared = [
+            self._prepare_rollout(
+                start_positions[b], start_times[b], prediction_length, interps[b],
+                test_dataset, num_samples, keys[b],
+                None if initial_y is None else initial_y[b],
+            )
+            for b in range(n)
+        ]
+        times, _, W, subkeys, init_y, batch = jax.tree_util.tree_map(
+            lambda *xs: jnp.stack(xs), *prepared
+        )
+        prediction_length = times.shape[1] - 1
+
+        if not shared:
+            interpolator = jax.tree_util.tree_map(lambda *xs: jnp.stack(xs), *interps)
+        if self._denoise_func_batch is None:
+            self._denoise_func_batch = {}
+        if shared not in self._denoise_func_batch:
+            self._denoise_func_batch[shared] = jit(
+                vmap(
+                    self._make_denoise_step(test_dataset, False),
+                    in_axes=(0, 0, 0, 0, 0, None, 0, None if shared else 0),
+                )
+            )
+        denoise_func = self._denoise_func_batch[shared]
+
+        coords_denoised = [
+            jnp.tile(start_positions[:, None, None], (1, num_samples, 1, 1))
+        ]
+        for i in range(1, prediction_length + 1):
+            new_coord, new_context = denoise_func(
+                subkeys, W, init_y, batch, times[:, i : i + 1], jnp.int32(i),
+                start_positions, interpolator,
+            )
+            coords_denoised.append(new_coord)
+            j = self._context_slot(i)
+            batch["prediction_context"] = (
+                batch["prediction_context"].at[:, :, j : j + 1].set(new_context)
+            )
+            if on_step is not None:
+                new_coord.block_until_ready()  # report finished work, not dispatch
+                on_step(i)
+        return jnp.concatenate(coords_denoised, axis=2)[:, :, 1:]
 
     def export_trained_model(
         self, model_name: str | None = None, export_path: str | None = None

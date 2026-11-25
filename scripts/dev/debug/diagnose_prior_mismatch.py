@@ -30,6 +30,12 @@ Reported per (sampler, start), over trajectories:
                 Median over trajectories with true displacement > --min_drift_km.
   spread_km     ensemble spread at the final hour (km)
 
+The trajectories of a patch are predicted together with
+``CoDiTModel.predict_batch`` (``--traj_batch`` per call), which gives the same
+results as one ``predict`` call per trajectory but keeps the GPU busy. Each
+trajectory's interpolator is stacked on the device (~0.7 GB for open_ocean at
+72 h), so lower ``--traj_batch`` if the GPU runs out of memory.
+
 Run on a machine with the test data, e.g.:
     python scripts/dev/debug/diagnose_prior_mismatch.py --dataset open_ocean
     python scripts/dev/debug/diagnose_prior_mismatch.py --dataset coastline \\
@@ -68,6 +74,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--samplers", nargs="+", default=["ddpm"], choices=["ddpm", "heun"])
     p.add_argument("--num_sampling_steps", type=int, default=18, help="Heun levels")
     p.add_argument("--min_drift_km", type=float, default=5.0)
+    p.add_argument(
+        "--traj_batch", type=int, default=10,
+        help="trajectories per batched predict call; GPU memory ~0.7 GB each "
+             "(open_ocean, 72 h) for the stacked interpolators",
+    )
     p.add_argument("--seed", type=int, default=0)
     p.add_argument(
         "--out_dir",
@@ -165,19 +176,15 @@ def main() -> None:
             continue
         patch_bar.set_postfix_str(config["name"])
         indices = np.unique(np.linspace(0, len(ds) - 1, args.per_patch, dtype=int))
-        # One tick per predict() call: trajectories x samplers x {noise, oracle}.
-        pred_bar = tqdm(
-            total=len(indices) * len(models) * 2,
-            desc="  predict",
-            position=1,
-            leave=False,
-        )
+
+        # Load the patch's trajectories; keys are derived per trajectory exactly
+        # as in the one-call-per-trajectory version, so results are unchanged.
+        trajs = []
         for idx in indices:
             try:
                 start_pos, start_time, _times, interp, coords = ds[int(idx)]
             except ValueError as e:
                 tqdm.write(f"skip {config['name']}[{idx}]: {e}")
-                pred_bar.update(len(models) * 2)
                 continue
             if not checked:
                 err = check_round_trip(coords, ref.std)
@@ -191,28 +198,54 @@ def main() -> None:
                 random.split(key_b, args.num_samples), L
             )[0]
             y_true = to_model_units(coords, ref.std)
-            starts = {
-                "noise": B,
-                "oracle": jnp.sqrt(ab_end) * y_true[None] + jnp.sqrt(1 - ab_end) * B,
-            }
+            trajs.append({
+                "idx": int(idx), "start_pos": start_pos, "start_time": start_time,
+                "interp": interp, "coords": coords, "key": key_pred,
+                "starts": {
+                    "noise": B,
+                    "oracle": jnp.sqrt(ab_end) * y_true[None] + jnp.sqrt(1 - ab_end) * B,
+                },
+            })
+        if not trajs:
+            continue
+
+        # One batched call per (chunk of trajectories, sampler, start); the bar
+        # advances once per predicted hour.
+        chunks = [trajs[i : i + args.traj_batch] for i in range(0, len(trajs), args.traj_batch)]
+        pred_bar = tqdm(
+            total=len(chunks) * len(models) * 2 * L, desc="  rollout (hours)",
+            position=1, leave=False,
+        )
+        patch_rows = []
+        for ci, chunk in enumerate(chunks):
             for sampler, model in models.items():
-                for start, y0 in starts.items():
-                    pred_bar.set_postfix_str(f"traj {idx} {sampler}/{start}")
+                for start in ("noise", "oracle"):
+                    pred_bar.set_postfix_str(
+                        f"{sampler}/{start}, trajectories {ci * args.traj_batch + 1}-"
+                        f"{ci * args.traj_batch + len(chunk)} of {len(trajs)}"
+                    )
                     try:
-                        pred = model.predict(
-                            start_pos, start_time, L, interp, ds,
-                            num_samples=args.num_samples, key=key_pred, initial_y=y0,
+                        preds = model.predict_batch(
+                            jnp.stack([t["start_pos"] for t in chunk]),
+                            [t["start_time"] for t in chunk], L,
+                            [t["interp"] for t in chunk], ds,
+                            num_samples=args.num_samples,
+                            keys=jnp.stack([t["key"] for t in chunk]),
+                            initial_y=jnp.stack([t["starts"][start] for t in chunk]),
+                            on_step=lambda _i, bar=pred_bar: bar.update(1),
                         )
                     except ValueError as e:
-                        tqdm.write(f"skip {config['name']}[{idx}] {sampler}/{start}: {e}")
-                        pred_bar.update(1)
+                        tqdm.write(f"skip {config['name']} chunk {ci} {sampler}/{start}: {e}")
                         continue
-                    pred_bar.update(1)
-                    rows.append(
-                        {"patch": config["name"], "idx": int(idx), "sampler": sampler,
-                         "start": start, **trajectory_metrics(pred, coords, hours)}
-                    )
+                    for t, pred in zip(chunk, preds):
+                        patch_rows.append(
+                            {"patch": config["name"], "idx": t["idx"], "sampler": sampler,
+                             "start": start, **trajectory_metrics(pred, t["coords"], hours)}
+                        )
         pred_bar.close()
+        order = {s_: n for n, s_ in enumerate(models)}
+        patch_rows.sort(key=lambda r: (r["idx"], order[r["sampler"]], r["start"] != "noise"))
+        rows.extend(patch_rows)
         pd.DataFrame(rows).to_csv(
             os.path.join(args.out_dir, f"{args.model_name}_{args.split}.csv"), index=False
         )
