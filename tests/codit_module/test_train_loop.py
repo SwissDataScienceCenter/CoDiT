@@ -12,6 +12,8 @@ from codit.codit_module import diffusion_models
 from codit.codit_module.brownian_noise_models import WalkNoiseModel
 from codit.codit_module.diffusion_models import (
     _cycle,
+    _dataset_arrays,
+    _device_batches,
     ema_decay_at,
     ema_update,
     train,
@@ -157,3 +159,54 @@ def test_ema_differs_from_raw_when_training(setup):
     leaves_best = jax.tree.leaves(best)
     leaves_raw = jax.tree.leaves(info["best_raw_params"])
     assert any(not np.allclose(a, b) for a, b in zip(leaves_best, leaves_raw))
+
+
+def test_device_batches_shuffle_and_drop_last():
+    it = _device_batches(10, 4, jax.random.PRNGKey(0))
+    first_pass = np.concatenate([np.asarray(next(it)) for _ in range(2)])
+    assert len(first_pass) == 8 and len(set(first_pass.tolist())) == 8  # 2 left over
+    second_pass = np.concatenate([np.asarray(next(it)) for _ in range(2)])
+    assert not np.array_equal(first_pass, second_pass)  # reshuffled
+    ordered = [np.asarray(b).tolist() for b in _device_batches(10, 4, None)]
+    assert ordered == [[0, 1, 2, 3], [4, 5, 6, 7]]  # one pass, in order
+
+
+def test_dataset_arrays_follow_indices_and_channels():
+    ds = _dataset(6)
+    ds.indices = np.array([5, 0, 3])
+    ds.set_context_var_idx(np.array([2, 0]))
+    traj, ctx = _dataset_arrays(DataLoader(ds, batch_size=2))
+    np.testing.assert_array_equal(traj, ds.trajectories[[5, 0, 3]])
+    np.testing.assert_array_equal(ctx, ds.context[[5, 0, 3]][..., [2, 0]])
+
+
+def test_device_data_matches_dataloader(setup):
+    """Same validation batches, order and keys: identical val losses; training runs."""
+    model, params = setup
+    opt = optax.sgd(0.0)
+    val_ds = _dataset(8, seed=1)
+    out = {}
+    for device_data in (False, True):
+        train_loader = DataLoader(_dataset(12), batch_size=4, shuffle=True, drop_last=True)
+        val_loader = DataLoader(val_ds, batch_size=4, shuffle=False, drop_last=True)
+        out[device_data] = train(
+            train_loader, opt, model, NOISE, params, opt.init(params),
+            jax.random.PRNGKey(0), SCHEDULE, num_epochs=2, num_batches_per_epoch=5,
+            val_dataloader=val_loader, std=STD, ema_decay=None, device_data=device_data,
+        )
+    np.testing.assert_allclose(out[True][3], out[False][3], rtol=1e-5)
+    assert len(out[True][2]) == 2 and np.all(np.isfinite(out[True][2]))
+
+
+def test_device_data_trains(setup):
+    model, params = setup
+    opt = optax.adam(1e-2)
+    train_loader = DataLoader(_dataset(12), batch_size=4, shuffle=True, drop_last=True)
+    val_loader = DataLoader(_dataset(8, seed=1), batch_size=4, shuffle=False, drop_last=True)
+    best, _, losses, val_losses, _ = train(
+        train_loader, opt, model, NOISE, params, opt.init(params), jax.random.PRNGKey(0),
+        SCHEDULE, num_epochs=3, num_batches_per_epoch=5, val_dataloader=val_loader,
+        std=STD, device_data=True,
+    )
+    assert len(losses) == 3 and np.all(np.isfinite(val_losses))
+    assert any(not np.allclose(a, b) for a, b in zip(jax.tree.leaves(best), jax.tree.leaves(params)))

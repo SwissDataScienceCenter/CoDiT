@@ -591,6 +591,9 @@ class CoDiTModel(BaseTrajectoryModel):
                   (default ``0.999``); selection and the exported model use the EMA
                   weights, the best raw weights are exported alongside. ``None``
                   disables EMA.
+                - ``device_data`` (bool): keep the training/validation samples on the
+                  device and assemble batches there (default ``True``); ``False`` uses
+                  the DataLoaders, e.g. when the data does not fit in device memory
                 - ``force_retrain`` (bool): retrain even if a checkpoint already exists (default ``False``)
 
         Returns:
@@ -613,6 +616,7 @@ class CoDiTModel(BaseTrajectoryModel):
             "early_stopping_min_delta": 1e-4,
             "val_batch_size": 128,
             "ema_decay": 0.999,
+            "device_data": True,
         }
 
         # assert isinstance(train_dataset.trajectories, jnp.ndarray), (
@@ -735,6 +739,9 @@ class CoDiTModel(BaseTrajectoryModel):
                 ),
                 aligned_context=self.aligned_context,
                 ema_decay=train_params.get("ema_decay", default_train_params["ema_decay"]),
+                device_data=train_params.get(
+                    "device_data", default_train_params["device_data"]
+                ),
             )
             writer.close()
             print("storing", self.ckpt_dir)

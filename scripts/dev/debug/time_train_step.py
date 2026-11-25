@@ -107,19 +107,32 @@ def main():
     print(f"DataLoader batch       : {fmt(t_load)}")
     jb, t_tr = timed(lambda: diffusion_models.transform_batch(torch_batch, std), args.repeats)
     print(f"transform_batch        : {fmt(t_tr)}")
+    t = time.perf_counter()
+    arrays = diffusion_models._dataset_arrays(loader)
+    jax.block_until_ready(arrays)
+    print(f"copy data to device    : {time.perf_counter() - t:.1f} s (once per run)")
+    gather = jax.jit(lambda tr, cx, idx: diffusion_models.transform_batch((tr[idx], cx[idx]), std))
+    idx_iter = diffusion_models._device_batches(len(ds), args.batch_size, random.PRNGKey(2))
+    _, t_dev = timed(lambda: gather(*arrays, next(idx_iter)), args.repeats)
+    print(f"device batch (gather)  : {fmt(t_dev)}   <- replaces DataLoader + transform_batch")
     carry = (params, opt_state, random.PRNGKey(1), 0.0)
     times = []
     for _ in range(args.repeats):
         t = time.perf_counter()
-        carry, loss = step(carry, jb)
+        carry, _ = step(carry, jb)
         jax.block_until_ready(carry)
         times.append(time.perf_counter() - t)
     print(f"jitted train step      : {fmt(times)}   (first = compile + autotune)")
     ema, decay = params, diffusion_models.ema_decay_at(5, 0.999)
     _, t_ema = timed(lambda: diffusion_models.ema_update(ema, carry[0], decay), args.repeats)
     print(f"EMA update             : {fmt(t_ema)}")
-    per_step = np.median(t_load[1:]) + np.median(t_tr[1:]) + np.median(times[1:]) + np.median(t_ema[1:])
-    print(f"=> ~{per_step:.2f} s per step, ~{per_step * 100 / 60:.1f} min per 100-step epoch")
+    for name, data_time in [
+        ("DataLoader", np.median(t_load[1:]) + np.median(t_tr[1:])),
+        ("device data", np.median(t_dev[1:])),
+    ]:
+        per_step = data_time + np.median(times[1:]) + np.median(t_ema[1:])
+        print(f"=> {name:11s}: ~{per_step:.2f} s per step, "
+              f"~{per_step * 100 / 60:.1f} min per 100-step epoch")
 
 
 if __name__ == "__main__":

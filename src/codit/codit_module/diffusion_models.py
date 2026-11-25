@@ -573,6 +573,39 @@ def ema_update(ema_params, params, decay):
     return optax.incremental_update(params, ema_params, step_size=1.0 - decay)
 
 
+def _dataset_arrays(dataloader: DataLoader) -> tuple[jnp.ndarray, jnp.ndarray]:
+    """Trajectories and selected context channels of a DataLoader's dataset, on device.
+
+    Takes the samples in the dataset's index order (``OceanTrainingDataset.indices``)
+    and only the context channels the model uses (``context_var_idx``), so the copy on
+    the device is as small as possible.
+    """
+    ds = dataloader.dataset
+    idx = np.asarray(ds.indices)
+    traj = np.asarray(ds.trajectories)[idx]
+    ctx = np.take(np.asarray(ds.context)[idx], np.asarray(ds.context_var_idx), axis=-1)
+    return jax.device_put(traj), jax.device_put(ctx)
+
+
+def _device_batches(n: int, batch_size: int, key: jax.Array | None):
+    """Yield index arrays for batches over ``n`` samples, like a DataLoader with
+    ``drop_last=True``: a fresh permutation per pass if ``key`` is given (shuffle),
+    otherwise one pass in order."""
+    num_batches = n // batch_size
+    if num_batches == 0:
+        raise ValueError(f"{n} samples are fewer than one batch of {batch_size}.")
+    while True:
+        if key is None:
+            order = jnp.arange(n)
+        else:
+            key, subkey = random.split(key)
+            order = random.permutation(subkey, n)
+        for b in range(num_batches):
+            yield order[b * batch_size : (b + 1) * batch_size]
+        if key is None:
+            return
+
+
 def _cycle(dataloader: DataLoader):
     """Iterate over a DataLoader indefinitely (reshuffling on every pass)."""
     while True:
@@ -607,6 +640,7 @@ def train(
     std: float | jnp.ndarray = 1.0,
     aligned_context: bool = True,
     ema_decay: float | None = 0.999,
+    device_data: bool = False,
 ) -> tuple:
     """Train the denoiser, with early stopping on the val loss.
 
@@ -630,6 +664,11 @@ def train(
         aligned_context: ``False`` for the legacy context layout of older checkpoints.
         ema_decay: Maximum EMA decay (``0.999`` averages over ~1000 steps), or
             ``None`` to train without EMA.
+        device_data: Copy the training and validation samples (only the selected
+            context channels) to the device once and assemble batches there, instead
+            of through the DataLoaders, which then only provide the datasets, batch
+            sizes and shuffle settings. Much faster when the DataLoader is the
+            bottleneck; needs the data to fit in device memory.
 
     Returns:
         ``(best_params, opt_state, loss_list, val_loss_list, info)``. ``val_loss_list``
@@ -645,6 +684,36 @@ def train(
     assert isinstance(train_dataloader.batch_size, int), "Batch size must be an integer."
     K = schedule_dict["K"]
     key, val_key = random.split(key)
+    if device_data:
+        key, data_key = random.split(key)
+        train_arrays = _dataset_arrays(train_dataloader)
+        val_arrays = _dataset_arrays(val_dataloader) if val_dataloader is not None else None
+
+        @jit
+        def gather(traj, ctx, idx):
+            return transform_batch((traj[idx], ctx[idx]), std, aligned_context)
+
+        def train_batches():
+            n = train_arrays[0].shape[0]
+            for idx in _device_batches(n, train_dataloader.batch_size, data_key):
+                yield gather(*train_arrays, idx)
+
+        def val_batches():
+            assert val_dataloader is not None and val_arrays is not None
+            n = val_arrays[0].shape[0]
+            for idx in _device_batches(n, val_dataloader.batch_size, None):
+                yield gather(*val_arrays, idx)
+
+    else:
+
+        def train_batches():
+            for batch in _cycle(train_dataloader):
+                yield transform_batch(batch, std, aligned_context)
+
+        def val_batches():
+            assert val_dataloader is not None
+            for batch in val_dataloader:
+                yield transform_batch(batch, std, aligned_context)
 
     @jit
     def step_func(carry: tuple, batch: dict) -> tuple:
@@ -668,8 +737,7 @@ def train(
     def validate(params) -> float:
         assert val_dataloader is not None
         total, count = 0.0, 0
-        for i, batch in enumerate(val_dataloader):
-            jax_batch = transform_batch(batch, std, aligned_context)
+        for i, jax_batch in enumerate(val_batches()):
             n = jax_batch["prediction_target_vals"].shape[0]
             k = validation_k(i, n, K)
             keys = random.split(random.fold_in(val_key, i), n)
@@ -686,13 +754,12 @@ def train(
     best_metric, best_params, best_epoch, epochs_since_best = np.inf, params, -1, 0
     best_raw_metric, best_raw_params, best_raw_epoch = np.inf, params, -1
     step = 0
-    train_iter = _cycle(train_dataloader)
+    train_iter = train_batches()
     pbar = tqdm(total=num_epochs, desc="Training", dynamic_ncols=True)
     for epoch in range(num_epochs):
         carry = (params, opt_state, key, 0.0)
         for _ in range(num_batches_per_epoch):
-            jax_batch = transform_batch(next(train_iter), std, aligned_context)
-            carry, _ = step_func(carry, jax_batch)
+            carry, _ = step_func(carry, next(train_iter))
             if use_ema:
                 ema_params = ema_update(ema_params, carry[0], ema_decay_at(step, ema_decay))
             step += 1

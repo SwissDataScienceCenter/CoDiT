@@ -69,6 +69,13 @@ if __name__ == "__main__":
         default=72,
         help="Trajectory horizon in hours. Use 72 for open_ocean, 24 for coastline.",
     )
+    parser.add_argument(
+        "--no_device_data",
+        action="store_true",
+        default=False,
+        help="Assemble batches through the PyTorch DataLoader instead of keeping the "
+        "training data on the GPU (use if it does not fit in GPU memory)",
+    )
     args = parser.parse_args()
 
     np.random.seed(args.seed)
@@ -146,6 +153,7 @@ if __name__ == "__main__":
                 "scheduler": scheduler,
                 "early_stopping_patience": args.early_stopping_patience,
                 "early_stopping_min_delta": args.early_stopping_min_delta,
+                "device_data": not args.no_device_data,
             },
         )
         model.export_trained_model(model.name)
