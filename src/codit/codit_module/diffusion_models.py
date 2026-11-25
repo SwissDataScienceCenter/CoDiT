@@ -505,7 +505,9 @@ class Autoregressive_Denoiser(nn.Module):
 ##### train
 
 
-def transform_batch(torch_batch: tuple, std: float | jnp.ndarray) -> dict:
+def transform_batch(
+    torch_batch: tuple, std: float | jnp.ndarray, aligned_context: bool = True
+) -> dict:
     trajectory = jnp.asarray(torch_batch[0])
     traj_in_metres = jax.vmap(transform_traj_to_metre)(trajectory)
     trajectory = traj_in_metres / std
@@ -513,7 +515,7 @@ def transform_batch(torch_batch: tuple, std: float | jnp.ndarray) -> dict:
     prediction_target_vals = trajectory[:, :]
     history_target_vals = trajectory[:, :1]
     history_context = context[:, :1]
-    prediction_context = context[:, :-1]
+    prediction_context = context[:, 1:] if aligned_context else context[:, :-1]
     jax_batch = {
         "history_target_vals": history_target_vals,
         "prediction_target_vals": prediction_target_vals,
@@ -587,7 +589,13 @@ def train(
     early_stopping_min_delta: float = 1e-4,
     writer: SummaryWriter | None = None,
     std: float | jnp.ndarray = 1.0,
+    aligned_context: bool = True,
 ) -> tuple:
+    """Train the denoiser, with early stopping on the val loss.
+
+    Args:
+        aligned_context: ``False`` for the legacy context layout of older checkpoints.
+    """
     if loss_list is None:
         loss_list = []
     if val_loss_list is None:
@@ -642,7 +650,7 @@ def train(
         ibatch = 0
         for batch in train_dataloader:
             # batch.pop('forecast_start')
-            jax_batch = transform_batch(batch, std)
+            jax_batch = transform_batch(batch, std, aligned_context)
             carry, _ = step_func(carry, jax_batch)
             ibatch += 1
             if ibatch > num_batches_per_epoch:
@@ -659,7 +667,7 @@ def train(
             carry = (params, opt_state, key, 0)
             for batch in val_dataloader:
                 # batch.pop('forecast_start')
-                jax_batch = transform_batch(batch, std)
+                jax_batch = transform_batch(batch, std, aligned_context)
                 carry, _ = get_loss_func(carry, jax_batch)
             params, opt_state, key, val_loss = carry
             val_loss_list.append(
