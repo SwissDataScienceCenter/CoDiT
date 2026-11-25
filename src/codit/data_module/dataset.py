@@ -222,21 +222,24 @@ class OceanTrainingDataset(Dataset):
         """Dataset for training data.
 
         It contains the trajectories of drifters and the context data at the true positions.
+        The arrays are kept in host memory as NumPy arrays: the context of a full training
+        set is ~10 GB, too large to hold (and copy) on an accelerator. The DataLoader moves
+        one batch at a time to the device.
 
         Args:
             trajectories: The trajectories of the drifters.
             context: The context data at the true positions.
         """
-        self.trajectories = jnp.asarray(trajectories)
-        self.context = jnp.asarray(context)
+        self.trajectories = np.asarray(trajectories)
+        self.context = np.asarray(context)
         if indeces is not None:
-            self.indices = indeces
+            self.indices = np.asarray(indeces)
         else:
-            self.indices = jnp.arange(len(self.trajectories))
-        self.context_var_idx = jnp.arange(0, 8, dtype=int)
-        
-    def set_context_var_idx(self, var_idx: jnp.ndarray):
-        self.context_var_idx = var_idx
+            self.indices = np.arange(len(self.trajectories))
+        self.context_var_idx = np.arange(0, 8, dtype=int)
+
+    def set_context_var_idx(self, var_idx: jnp.ndarray | np.ndarray):
+        self.context_var_idx = np.asarray(var_idx)
 
     def __len__(self) -> int:
         """Get the number of training samples.
@@ -309,18 +312,18 @@ class OceanTrainingDataset(Dataset):
         for sample in tqdm(iter(dataset)):
             #_, times, interpolator, coordinates = sample
             _, _, times, interpolator, coordinates = sample
-            context.append(dataset.get_context(times, coordinates, interpolator)[None])
-            trajectories.append(coordinates[None])
+            context.append(
+                np.asarray(dataset.get_context(times, coordinates, interpolator))[None]
+            )
+            trajectories.append(np.asarray(coordinates)[None])
 
-        context = jnp.concatenate(context, axis=0)
-        trajectories = jnp.concatenate(trajectories, axis=0)
+        context = np.concatenate(context, axis=0)
+        trajectories = np.concatenate(trajectories, axis=0)
         return cls(trajectories, context)
 
     def shuffle(self) -> None:
         """Shuffle the training data."""
-        self.indices = jnp.asarray(
-            self.indices[np.random.permutation(len(self.trajectories))]
-        )
+        self.indices = self.indices[np.random.permutation(len(self.trajectories))]
         # self.trajectories = self.trajectories[idx]
         # self.context = self.context[idx]
 
@@ -334,8 +337,8 @@ class OceanTrainingDataset(Dataset):
             Two training datasets.
         """
         split_idx = int(len(self.trajectories) * split)
-        train_indices = jnp.asarray(self.indices[:split_idx], dtype=int)
-        val_indices = jnp.asarray(self.indices[split_idx:], dtype=int)
+        train_indices = np.asarray(self.indices[:split_idx], dtype=int)
+        val_indices = np.asarray(self.indices[split_idx:], dtype=int)
         return OceanTrainingDataset(
             self.trajectories, self.context, train_indices
         ), OceanTrainingDataset(self.trajectories, self.context, val_indices)
@@ -343,8 +346,9 @@ class OceanTrainingDataset(Dataset):
     def remove_nans(self) -> None:
         """Remove samples with NaNs."""
         nan_idx = np.isnan(self.context).any(axis=(1, 2, 3, 4))
-        self.trajectories = self.trajectories[~nan_idx]
-        self.context = self.context[~nan_idx]
+        if nan_idx.any():  # boolean indexing copies the whole array; skip if not needed
+            self.trajectories = self.trajectories[~nan_idx]
+            self.context = self.context[~nan_idx]
         self.indices = np.arange(len(self.trajectories))
 
     def load_into_memory(self) -> None:
@@ -367,6 +371,6 @@ def merge_training_sets(datasets: list) -> OceanTrainingDataset:
     for dataset in datasets:
         trajectories.append(dataset.trajectories)
         context.append(dataset.context)
-    trajectories = jnp.concatenate(trajectories, axis=0)
-    context = jnp.concatenate(context, axis=0)
+    trajectories = np.concatenate(trajectories, axis=0)
+    context = np.concatenate(context, axis=0)
     return OceanTrainingDataset(trajectories, context)
