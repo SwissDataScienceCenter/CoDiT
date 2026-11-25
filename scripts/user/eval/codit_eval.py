@@ -75,6 +75,14 @@ if __name__ == "__main__":
         default=18,
         help="Noise levels visited by the Heun sampler (2N-1 network evaluations).",
     )
+    parser.add_argument(
+        "--weights",
+        type=str,
+        default="default",
+        choices=["default", "raw"],
+        help="'default': the exported model (EMA weights if trained with EMA); "
+        "'raw': the best non-EMA weights of an EMA-trained model, for comparison.",
+    )
     args = parser.parse_args()
     np.random.seed(0)
 
@@ -92,6 +100,8 @@ if __name__ == "__main__":
     result_name = model_name
     if args.sampler != "ddpm":
         result_name += f"_{args.sampler}{args.num_sampling_steps}"
+    if args.weights != "default":
+        result_name += f"_{args.weights}"
     if args.dataset == "open_ocean":
         config_path = os.path.join(config_paths.CONFIG_PATH, "open_ocean", args.split)
         result_path = os.path.join(
@@ -130,7 +140,7 @@ if __name__ == "__main__":
         val_datasets = [val_datasets[i] for i in patch_indices]
 
     # model_name = f"diffusion_model_{args.dataset}_{args.model_type}_{args.context_encoder_type}_{args.optimizer}_{args.scheduler}"
-    model = CoDiTModel.import_trained_model(model_name=model_name)
+    model = CoDiTModel.import_trained_model(model_name=model_name, weights=args.weights)
     model.set_sampler(args.sampler, args.num_sampling_steps)
     num_predicted_traj = 0
     for val_dataname in tqdm(val_datasets):

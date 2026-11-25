@@ -558,6 +558,21 @@ def validation_k(batch_index: int, batch_size: int, K: int) -> jnp.ndarray:
     return ((batch_index * batch_size + jnp.arange(batch_size)) % K)[:, None]
 
 
+def ema_decay_at(step: int | jnp.ndarray, max_decay: float) -> jnp.ndarray:
+    """EMA decay with warm-up: ``min(max_decay, (1 + step) / (10 + step))``.
+
+    Early on the average follows the weights closely, so it is not dominated by the
+    random initialisation; later it averages over ~``1 / (1 - max_decay)`` steps.
+    """
+    return jnp.minimum(max_decay, (1.0 + step) / (10.0 + step))
+
+
+@jit
+def ema_update(ema_params, params, decay):
+    """One EMA step: ``ema <- decay * ema + (1 - decay) * params``."""
+    return optax.incremental_update(params, ema_params, step_size=1.0 - decay)
+
+
 def _cycle(dataloader: DataLoader):
     """Iterate over a DataLoader indefinitely (reshuffling on every pass)."""
     while True:
@@ -591,6 +606,7 @@ def train(
     writer: SummaryWriter | None = None,
     std: float | jnp.ndarray = 1.0,
     aligned_context: bool = True,
+    ema_decay: float | None = 0.999,
 ) -> tuple:
     """Train the denoiser, with early stopping on the val loss.
 
@@ -604,12 +620,23 @@ def train(
     than ``early_stopping_min_delta`` (absolute, in MSE), and the parameters of the
     best epoch are returned.
 
+    With ``ema_decay`` set, an exponential moving average of the weights is kept
+    (with warm-up, see ``ema_decay_at``). Both the raw and the EMA weights are
+    validated every epoch; early stopping and best-epoch selection use the EMA
+    weights, which are returned as the model. The raw weights of their own best
+    epoch are returned as well, for comparison.
+
     Args:
         aligned_context: ``False`` for the legacy context layout of older checkpoints.
+        ema_decay: Maximum EMA decay (``0.999`` averages over ~1000 steps), or
+            ``None`` to train without EMA.
 
     Returns:
-        ``(best_params, opt_state, loss_list, val_loss_list)``; ``opt_state`` is the
-        optimizer state at the last epoch.
+        ``(best_params, opt_state, loss_list, val_loss_list, info)``. ``val_loss_list``
+        holds the selection metric (EMA val loss with EMA, raw otherwise);
+        ``opt_state`` is the optimizer state at the last epoch. ``info`` has
+        ``best_epoch``, ``val_loss_raw`` and ``val_loss_ema`` (per epoch; the latter
+        empty without EMA), and ``best_raw_params`` / ``best_raw_epoch``.
     """
     if loss_list is None:
         loss_list = []
@@ -652,7 +679,13 @@ def train(
             raise ValueError("The validation DataLoader is empty.")
         return total / count
 
+    use_ema = ema_decay is not None
+    ema_params = params
+    val_raw: list = []
+    val_ema: list = []
     best_metric, best_params, best_epoch, epochs_since_best = np.inf, params, -1, 0
+    best_raw_metric, best_raw_params, best_raw_epoch = np.inf, params, -1
+    step = 0
     train_iter = _cycle(train_dataloader)
     pbar = tqdm(total=num_epochs, desc="Training", dynamic_ncols=True)
     for epoch in range(num_epochs):
@@ -660,17 +693,28 @@ def train(
         for _ in range(num_batches_per_epoch):
             jax_batch = transform_batch(next(train_iter), std, aligned_context)
             carry, _ = step_func(carry, jax_batch)
+            if use_ema:
+                ema_params = ema_update(ema_params, carry[0], ema_decay_at(step, ema_decay))
+            step += 1
         params, opt_state, key, loss = carry
         # each step adds the batch-mean MSE
         loss_list.append(float(loss) / num_batches_per_epoch)
         if val_dataloader is not None:
-            val_loss_list.append(validate(params))
+            val_raw.append(validate(params))
+            raw_metric = val_raw[-1]
+            if use_ema:
+                val_ema.append(validate(ema_params))
+            val_loss_list.append(val_ema[-1] if use_ema else val_raw[-1])
             metric = val_loss_list[-1]
         else:
-            metric = loss_list[-1]
+            # without validation data, select on the training loss (raw weights)
+            raw_metric = metric = loss_list[-1]
+        selected = ema_params if use_ema else params
 
+        if raw_metric < best_raw_metric:
+            best_raw_metric, best_raw_params, best_raw_epoch = raw_metric, params, epoch
         if best_metric - metric > early_stopping_min_delta:
-            best_metric, best_params, best_epoch = metric, params, epoch
+            best_metric, best_params, best_epoch = metric, selected, epoch
             epochs_since_best = 0
         else:
             epochs_since_best += 1
@@ -678,6 +722,7 @@ def train(
         if checkpoint_mngr is not None:
             ckpt = {
                 "params": params,
+                "ema_params": ema_params,
                 "opt_state": opt_state,
                 "key": key,
                 "epoch": epoch,
@@ -687,20 +732,35 @@ def train(
             writer.add_scalar("Loss/train", loss_list[-1], epoch)
             if val_dataloader is not None:
                 writer.add_scalar("Loss/val", val_loss_list[-1], epoch)
+                writer.add_scalar("Loss/val_raw", val_raw[-1], epoch)
+                if use_ema:
+                    writer.add_scalar("Loss/val_ema", val_ema[-1], epoch)
         postfix = {"train_loss": loss_list[-1], "best_epoch": best_epoch}
         if val_dataloader is not None:
-            postfix["val_loss"] = val_loss_list[-1]
+            postfix["val_raw"] = val_raw[-1]
+            if use_ema:
+                postfix["val_ema"] = val_ema[-1]
         pbar.set_postfix(postfix)
         pbar.update(1)
         if epochs_since_best >= early_stopping_patience:
             print(f"Early stopping at epoch {epoch}")
             break
     pbar.close()
+    what = ("val" if val_dataloader is not None else "train") + (" (EMA)" if use_ema else "")
     print(
         f"Best epoch {best_epoch} ({(best_epoch + 1) * num_batches_per_epoch} steps), "
-        f"{'val' if val_dataloader is not None else 'train'} loss {best_metric:.5g}"
+        f"{what} loss {best_metric:.5g}"
     )
-    return best_params, opt_state, loss_list, val_loss_list
+    if use_ema and val_dataloader is not None:
+        print(f"Best raw weights: epoch {best_raw_epoch}, val loss {best_raw_metric:.5g}")
+    info = {
+        "best_epoch": best_epoch,
+        "val_loss_raw": val_raw,
+        "val_loss_ema": val_ema,
+        "best_raw_params": best_raw_params,
+        "best_raw_epoch": best_raw_epoch,
+    }
+    return best_params, opt_state, loss_list, val_loss_list, info
 
 
 def denoising_loss_value(

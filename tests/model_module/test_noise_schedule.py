@@ -69,3 +69,25 @@ def test_shipped_checkpoint_keeps_linear_schedule():
     model = CoDiTModel.import_trained_model("codit_GRU_open_ocean")
     assert model.params["noise_schedule"] == "linear"
     np.testing.assert_allclose(_alpha_bar_end(model), 0.364, atol=1e-3)
+
+
+def test_export_import_raw_weights(tmp_path):
+    model = CoDiTModel("ema_model", PARAMS | {"noise_schedule": "cosine"})
+    model.nn_params = {"w": np.ones(3)}
+    model.nn_params_raw = {"w": np.zeros(3)}
+    model.std = np.array([1.0, 2.0])
+    model.export_trained_model(export_path=str(tmp_path))
+    ema = CoDiTModel.import_trained_model("ema_model", import_path=str(tmp_path))
+    raw = CoDiTModel.import_trained_model("ema_model", import_path=str(tmp_path), weights="raw")
+    np.testing.assert_array_equal(ema.nn_params["w"], np.ones(3))
+    np.testing.assert_array_equal(raw.nn_params["w"], np.zeros(3))
+    assert raw.params["noise_schedule"] == "cosine"
+
+
+def test_import_raw_weights_without_ema_raises(tmp_path):
+    model = CoDiTModel("plain", dict(PARAMS))
+    model.nn_params = {"w": np.ones(3)}
+    model.std = np.array([1.0, 2.0])
+    model.export_trained_model(export_path=str(tmp_path))
+    with pytest.raises(ValueError, match="raw weights"):
+        CoDiTModel.import_trained_model("plain", import_path=str(tmp_path), weights="raw")

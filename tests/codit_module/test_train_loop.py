@@ -10,7 +10,13 @@ from torch.utils.data import DataLoader
 
 from codit.codit_module import diffusion_models
 from codit.codit_module.brownian_noise_models import WalkNoiseModel
-from codit.codit_module.diffusion_models import _cycle, train, validation_k
+from codit.codit_module.diffusion_models import (
+    _cycle,
+    ema_decay_at,
+    ema_update,
+    train,
+    validation_k,
+)
 from codit.codit_module.scheduler import cosine_schedule
 from codit.data_module.dataset import OceanTrainingDataset
 
@@ -61,7 +67,7 @@ def setup():
     return model, params
 
 
-def _run(setup, lr, num_epochs, patience=10, n_train=12, batch=4, steps=5, key=0):
+def _run(setup, lr, num_epochs, patience=10, n_train=12, batch=4, steps=5, key=0, ema=0.999):
     model, params = setup
     opt = optax.sgd(lr)
     train_loader = CountingLoader(DataLoader(_dataset(n_train), batch_size=batch, shuffle=True, drop_last=True))
@@ -70,6 +76,7 @@ def _run(setup, lr, num_epochs, patience=10, n_train=12, batch=4, steps=5, key=0
         train_loader, opt, model, NOISE, params, opt.init(params), jax.random.PRNGKey(key),
         SCHEDULE, num_epochs=num_epochs, num_batches_per_epoch=steps,
         val_dataloader=val_loader, early_stopping_patience=patience, std=STD,
+        ema_decay=ema,
     )
     return out, train_loader
 
@@ -88,25 +95,28 @@ def test_cycle_restarts_and_rejects_empty_loader():
 
 def test_epoch_is_exactly_num_batches_per_epoch_steps(setup):
     # 12 samples / batch 4 = 3 batches per pass, but 5 steps per epoch are required
-    (_, _, losses, _), loader = _run(setup, lr=1e-3, num_epochs=2, steps=5)
+    (_, _, losses, _, _), loader = _run(setup, lr=1e-3, num_epochs=2, steps=5)
     assert len(losses) == 2
     assert loader.drawn == 10
 
 
 def test_val_loss_is_deterministic_and_patience_is_exact(setup):
     # lr = 0: parameters never change, so the val loss must be identical every epoch
-    (_, _, losses, val_losses), _ = _run(setup, lr=0.0, num_epochs=20, patience=3)
+    (_, _, losses, val_losses, info), _ = _run(setup, lr=0.0, num_epochs=20, patience=3)
     assert len(set(val_losses)) == 1
+    # with frozen weights the EMA equals the weights
+    np.testing.assert_allclose(info["val_loss_ema"], info["val_loss_raw"], rtol=1e-5)
     # epoch 0 is the best; stops after exactly `patience` epochs without improvement
     assert len(val_losses) == 1 + 3
     # loss is a per-sample mean MSE (order 1 for epsilon prediction), not divided by batch size
     assert 0.05 < val_losses[0] < 20 and 0.05 < losses[0] < 20
 
 
-def test_returns_parameters_of_best_epoch(setup):
+@pytest.mark.parametrize("ema", [None, 0.999])
+def test_returns_parameters_of_best_epoch(setup, ema):
     # sensible lr for epoch 0 (5 steps), then a huge one: later epochs get worse or NaN
     lr = optax.piecewise_constant_schedule(1e-2, {5: 1e6})
-    (best, _, _, val_losses), _ = _run(setup, lr=lr, num_epochs=4, patience=10)
+    (best, _, _, val_losses, info), _ = _run(setup, lr=lr, num_epochs=4, patience=10, ema=ema)
     assert np.isfinite(val_losses[0])
     best_epoch = int(np.nanargmin(val_losses))
     assert best_epoch < len(val_losses) - 1, "test needs a run that gets worse"
@@ -115,8 +125,35 @@ def test_returns_parameters_of_best_epoch(setup):
     opt = optax.sgd(0.0)
     val_loader = DataLoader(_dataset(8, seed=1), batch_size=4, shuffle=False, drop_last=True)
     train_loader = DataLoader(_dataset(12), batch_size=4, shuffle=True, drop_last=True)
-    _, _, _, recheck = train(
+    _, _, _, recheck, _ = train(
         train_loader, opt, model, NOISE, best, opt.init(best), jax.random.PRNGKey(0),
         SCHEDULE, num_epochs=1, num_batches_per_epoch=1, val_dataloader=val_loader, std=STD,
+        ema_decay=None,
     )
     assert recheck[0] == pytest.approx(val_losses[best_epoch], rel=1e-5)
+
+
+def test_ema_decay_warm_up():
+    assert float(ema_decay_at(0, 0.999)) == pytest.approx(0.1)
+    assert float(ema_decay_at(10, 0.999)) == pytest.approx(11 / 20)
+    assert float(ema_decay_at(100_000, 0.999)) == pytest.approx(0.999)
+
+
+def test_ema_update():
+    ema = {"w": jnp.array([0.0, 1.0])}
+    new = ema_update(ema, {"w": jnp.array([1.0, 1.0])}, 0.9)
+    np.testing.assert_allclose(new["w"], [0.1, 1.0], rtol=1e-6)
+
+
+def test_without_ema_no_ema_losses(setup):
+    (_, _, _, val_losses, info), _ = _run(setup, lr=1e-3, num_epochs=2, ema=None)
+    assert info["val_loss_ema"] == []
+    assert val_losses == info["val_loss_raw"]
+
+
+def test_ema_differs_from_raw_when_training(setup):
+    (best, _, _, _, info), _ = _run(setup, lr=1e-2, num_epochs=2, ema=0.999)
+    assert info["val_loss_ema"] != info["val_loss_raw"]
+    leaves_best = jax.tree.leaves(best)
+    leaves_raw = jax.tree.leaves(info["best_raw_params"])
+    assert any(not np.allclose(a, b) for a, b in zip(leaves_best, leaves_raw))

@@ -504,6 +504,7 @@ class CoDiTModel(BaseTrajectoryModel):
             T=prediction_length * dt,  # type: ignore
         )
         self.nn_params = None
+        self.nn_params_raw = None  # best non-EMA weights, set by fit when EMA is used
         self._denoise_func: Optional[Callable] = None  # cached jit-compiled step function
         self.aligned_context = bool(params["aligned_context"])
         self.set_sampler(
@@ -586,6 +587,10 @@ class CoDiTModel(BaseTrajectoryModel):
                   the parameters of the best epoch are kept
                 - ``early_stopping_min_delta`` (float): minimum improvement of the mean val
                   denoising MSE (absolute; default ``1e-4``)
+                - ``ema_decay`` (float | None): EMA of the weights with this maximum decay
+                  (default ``0.999``); selection and the exported model use the EMA
+                  weights, the best raw weights are exported alongside. ``None``
+                  disables EMA.
                 - ``force_retrain`` (bool): retrain even if a checkpoint already exists (default ``False``)
 
         Returns:
@@ -607,6 +612,7 @@ class CoDiTModel(BaseTrajectoryModel):
             "early_stopping_patience": 10,
             "early_stopping_min_delta": 1e-4,
             "val_batch_size": 128,
+            "ema_decay": 0.999,
         }
 
         # assert isinstance(train_dataset.trajectories, jnp.ndarray), (
@@ -703,7 +709,7 @@ class CoDiTModel(BaseTrajectoryModel):
         if not os.path.isdir(
             os.path.join(os.path.join(self.ckpt_dir, "final"), "d")
         ) or train_params.get("force_retrain", False):
-            params, opt_state, loss_list, val_loss_list = diffusion_models.train(
+            params, opt_state, loss_list, val_loss_list, info = diffusion_models.train(
                 train_dataloader,
                 optimizer,
                 self.model,
@@ -728,6 +734,7 @@ class CoDiTModel(BaseTrajectoryModel):
                     "early_stopping_min_delta", 1e-4
                 ),
                 aligned_context=self.aligned_context,
+                ema_decay=train_params.get("ema_decay", default_train_params["ema_decay"]),
             )
             writer.close()
             print("storing", self.ckpt_dir)
@@ -746,8 +753,15 @@ class CoDiTModel(BaseTrajectoryModel):
                 val_loss_list=val_loss_list,
                 std=self.std,
                 aligned_context=self.aligned_context,
+                best_epoch=info["best_epoch"],
+                val_loss_raw=info["val_loss_raw"],
+                val_loss_ema=info["val_loss_ema"],
             )
             self.nn_params = params
+            # raw (non-EMA) weights of their own best epoch; exported for comparison
+            self.nn_params_raw = (
+                info["best_raw_params"] if info["val_loss_ema"] else None
+            )
             self._denoise_func = None  # invalidate cached jit (nn_params changed)
         return self
 
@@ -1001,11 +1015,14 @@ class CoDiTModel(BaseTrajectoryModel):
             )
         # jnp.savez(nn_params_path, params=self.nn_params, std=self.std, allow_pickle=True)
         with open(nn_params_path, "wb") as f:
-            pickle.dump({"params": self.nn_params, "std": self.std}, f)
+            payload = {"params": self.nn_params, "std": self.std}
+            if getattr(self, "nn_params_raw", None) is not None:
+                payload["raw_params"] = self.nn_params_raw
+            pickle.dump(payload, f)
 
     @classmethod
     def import_trained_model(
-        cls, model_name: str, import_path: str | None = None
+        cls, model_name: str, import_path: str | None = None, weights: str = "default"
     ) -> "CoDiTModel":
         """Restore a trained model from a checkpoint directory.
 
@@ -1013,6 +1030,9 @@ class CoDiTModel(BaseTrajectoryModel):
             model_name: Name of the checkpoint directory to load.
             import_path: Parent directory to search. Defaults to
                 ``config_paths.MODEL_PATH``.
+            weights: ``"default"`` loads the exported model (the EMA weights for
+                models trained with EMA); ``"raw"`` loads the best raw (non-EMA)
+                weights, only available for models trained with EMA.
 
         Returns:
             A ``CoDiTModel`` instance with parameters restored from the checkpoint.
@@ -1047,7 +1067,16 @@ class CoDiTModel(BaseTrajectoryModel):
 
         model = cls(model_name, model_config)
         assert isinstance(nn_params, dict), "Loaded nn_params should be a dictionary."
-        model.nn_params = nn_params["params"]
+        if weights == "default":
+            model.nn_params = nn_params["params"]
+        elif weights == "raw":
+            if "raw_params" not in nn_params:
+                raise ValueError(
+                    f"{model_name} has no raw weights (it was not trained with EMA)"
+                )
+            model.nn_params = nn_params["raw_params"]
+        else:
+            raise ValueError(f"Unknown weights {weights!r}: use 'default' or 'raw'")
         model.std = nn_params["std"]
 
         return model
