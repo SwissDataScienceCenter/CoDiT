@@ -9,7 +9,17 @@ bathymetry (GEBCO), and initial GPS position. For more details check our [paper]
 
 ### 1. Set up the environment
 
-**Option A — pip (recommended):**
+**Option A — uv (recommended):**
+
+```bash
+uv sync                # creates .venv with the exact versions in uv.lock
+source .venv/bin/activate
+```
+
+Add `--extra cuda` for GPU support and `--extra dev` for the test and lint tools.
+Supported Python versions: 3.10 to 3.13.
+
+**Option A' — pip:**
 
 ```bash
 python -m venv .venv
@@ -17,10 +27,12 @@ source .venv/bin/activate
 pip install -e .
 ```
 
+pip ignores `uv.lock`, so it installs the newest versions allowed by `pyproject.toml`.
+
 **Option B — conda / mamba:**
 
 ```bash
-conda create -n codit "python>=3.10"   # or: mamba create ...
+conda create -n codit "python>=3.10,<3.14"   # or: mamba create ...
 conda activate codit
 pip install -e .
 ```
@@ -36,7 +48,8 @@ Open the repo in VS Code with the "Dev Containers" extension and choose
 Install after the base environment is set up (JAX ships CPU-only by default):
 
 ```bash
-pip install --upgrade "jax[cuda12]"
+uv sync --extra cuda          # with uv
+pip install -e ".[cuda]"      # with pip
 ```
 
 **Hardware:** training on CPU works but is slow — a GPU is strongly
@@ -270,9 +283,9 @@ export CODIT_CREDENTIALS_PATH=/path/to/your/config.ini
   at the repo root (or point `CODIT_CREDENTIALS_PATH` at your file) and fill
   in your CDS and CMS values. Not needed for the Zenodo download or
   `reproduce_results.sh`.
-- **JAX still on CPU after installing `jax[cuda12]`** — reinstall JAX
-  *after* `pip install -e .`. The editable install pulls the CPU wheel and
-  will shadow the CUDA one if the order is reversed.
+- **JAX still on CPU** — install with the `cuda` extra (`uv sync --extra cuda`
+  or `pip install -e ".[cuda]"`). A separate `pip install jax[cuda12]` pulls
+  a newer JAX than the pinned one, which breaks loading the shipped checkpoints.
 
 ## Cite
 

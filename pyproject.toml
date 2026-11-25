@@ -8,7 +8,7 @@ version = "0.0.1"
 description = "Conditional Diffusion Trajectory predictions for ocean drifters"
 license = "MIT"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.14"  # flax<0.11 does not support 3.14
 authors = [
     {name = "Christian Donner", email = "christian.research@mailbox.org"},
 ]
@@ -27,9 +27,9 @@ dependencies = [
     "xarray==2024.2.0",
     "cftime",
     "pandas",
-    "jax>=0.2.10",
-    "jaxlib>=0.1.60",
-    "flax>=0.10.6",
+    "jax>=0.4.30,<0.8",  # flax<0.11 breaks with newer jax
+    "jaxlib>=0.4.30,<0.8",
+    "flax>=0.10.6,<0.11",  # newer flax cannot unpickle the shipped Linear Gaussian checkpoints
     "copernicusmarine",
     "interpax",
     "geopandas",
@@ -46,7 +46,7 @@ dependencies = [
 
 [project.optional-dependencies]
 parcels = ["parcels", "zarr"]
-viz = ["streamlit==1.25.0"]
+cuda = ["jax[cuda12]>=0.4.30,<0.8"]
 dev = [
     "black",
     "ruff",
