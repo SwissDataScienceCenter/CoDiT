@@ -755,6 +755,7 @@ class CoDiTModel(BaseTrajectoryModel):
         num_samples: int = 1,
         key: jax.Array = random.PRNGKey(0),
         return_denoising_steps: bool = False,
+        initial_y: jnp.ndarray | None = None,
     ) -> jnp.ndarray | tuple[jnp.ndarray, jnp.ndarray]:
         """Sample trajectory predictions from the trained diffusion model.
 
@@ -775,6 +776,11 @@ class CoDiTModel(BaseTrajectoryModel):
             return_denoising_steps: If ``True``, also return the intermediate denoising
                 trajectory of shape ``(num_samples, S, prediction_length, 2)``, with
                 ``S = K`` for ``"ddpm"`` and ``S = len(step_indices)`` for ``"heun"``.
+            initial_y: Diagnostics only. Overrides the starting state of the reverse
+                process, shape ``(num_samples, prediction_length + 1, 2)``, in the
+                model's centred and scaled units. Default ``None`` draws it from
+                the noise model. Used by
+                ``scripts/dev/debug/diagnose_prior_mismatch.py``.
 
         Returns:
             Predicted trajectories as ``jnp.ndarray`` of shape ``(num_samples, prediction_length, 2)``
@@ -809,9 +815,15 @@ class CoDiTModel(BaseTrajectoryModel):
         coords_denoised = [jnp.tile(start_position[None], (num_samples, 1, 1))]
         keys = random.split(key, num_samples + 1)
         key, subkeys = keys[0], keys[1:]
-        initial_y, _ = vmap(self.noise_model, in_axes=(0, None))(
+        sampled_y, _ = vmap(self.noise_model, in_axes=(0, None))(
             subkeys, prediction_length
         )
+        if initial_y is None:
+            initial_y = sampled_y
+        elif initial_y.shape != sampled_y.shape:
+            raise ValueError(
+                f"initial_y must have shape {sampled_y.shape}, got {initial_y.shape}"
+            )
 
         if self._denoise_func is None or return_denoising_steps:
             @partial(vmap, in_axes=(0, 0, 0, 0, None, None, None, None))
