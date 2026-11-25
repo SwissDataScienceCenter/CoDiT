@@ -39,7 +39,11 @@ from codit.codit_module.brownian_noise_models import (
 # Suppress the SerializationWarning
 from codit.data_module import config_paths, data_transform
 from codit.data_module.data_transform import transform_traj_to_metre
-from codit.data_module.dataset import OceanDataset, OceanTrainingDataset
+from codit.data_module.dataset import (
+    OceanDataset,
+    OceanTrainingDataset,
+    drop_unused_derivatives,
+)
 from codit.model_module.base_model import BaseTrajectoryModel
 
 warnings.filterwarnings("ignore", category=xr.SerializationWarning)
@@ -996,9 +1000,8 @@ class CoDiTModel(BaseTrajectoryModel):
 
         Memory grows with ``B``: the conditioning batch holds
         ``B * num_samples * prediction_length`` context grids, and per-trajectory
-        interpolators are stacked on the device (an ``OceanDataset`` item's
-        interpolator stores its data plus an 8x derivative array, ~0.7 GB for a
-        72 h open_ocean patch).
+        interpolators are stacked on the device (~80 MB each for a 72 h
+        open_ocean patch, after ``drop_unused_derivatives``).
 
         Args:
             start_positions: Start lat/lon per trajectory, shape ``(B, 2)``.
@@ -1051,7 +1054,12 @@ class CoDiTModel(BaseTrajectoryModel):
         prediction_length = times.shape[1] - 1
 
         if not shared:
-            interpolator = jax.tree_util.tree_map(lambda *xs: jnp.stack(xs), *interps)
+            # the derivative stack is unused for linear interpolation; dropping it
+            # before stacking keeps device memory ~9x lower
+            interpolator = jax.tree_util.tree_map(
+                lambda *xs: jnp.stack(xs),
+                *[drop_unused_derivatives(it) for it in interps],
+            )
         if self._denoise_func_batch is None:
             self._denoise_func_batch = {}
         if shared not in self._denoise_func_batch:

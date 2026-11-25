@@ -117,3 +117,17 @@ def test_mismatched_inputs_raise(setup):
         model.predict_batch(jnp.zeros((2, 2)), [STARTS[0][1]] * 3, L, interps, ds, keys=KEYS)
     with pytest.raises(ValueError, match="interpolators"):
         _batch(model, ds, interps[:2])
+
+
+def test_drop_unused_derivatives_keeps_values():
+    from codit.data_module.dataset import drop_unused_derivatives
+
+    full = _interp(STARTS[0][1], 1.0)
+    light = drop_unused_derivatives(full)
+    q = (full.x[:1] + 0.4, jnp.array([-35.13]), jnp.array([95.31]))
+    assert jnp.array_equal(full(*q), light(*q))
+    size = lambda it: sum(x.nbytes for x in jax.tree_util.tree_leaves(it) if hasattr(x, "nbytes"))
+    assert size(light) < size(full) / 5
+
+    cubic = Interpolator3D(full.x, LAT, LON, full.f, method="cubic")
+    assert drop_unused_derivatives(cubic) is cubic

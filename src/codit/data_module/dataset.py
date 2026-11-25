@@ -16,6 +16,28 @@ from tqdm import tqdm
 from codit.data_module import context_functions, utils
 
 
+def drop_unused_derivatives(interpolator: Interpolator3D) -> Interpolator3D:
+    """Return ``interpolator`` without its precomputed derivative stack, if unused.
+
+    ``interpax`` precomputes an 8x-sized derivative array (``_fstack``) for every
+    ``Interpolator3D`` but only cubic methods read it. For other methods (e.g. the
+    ``"linear"`` interpolators built by ``OceanDataset``) it is replaced by an empty
+    array: interpolated values are unchanged, memory drops by ~9x. Interpolators
+    using a cubic method, or an interpax version without ``_fstack``, are returned
+    unchanged.
+    """
+    import equinox as eqx
+    from interpax import _spline
+
+    cubic = getattr(_spline, "CUBIC_METHODS", None)
+    fstack = getattr(interpolator, "_fstack", None)
+    if cubic is None or fstack is None or interpolator.method in cubic:
+        return interpolator
+    return eqx.tree_at(
+        lambda t: t._fstack, interpolator, jnp.zeros((0,), dtype=fstack.dtype)
+    )
+
+
 class OceanDataset(Dataset):
 
     def __init__(

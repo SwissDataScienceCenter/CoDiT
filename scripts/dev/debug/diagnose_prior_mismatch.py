@@ -33,8 +33,9 @@ Reported per (sampler, start), over trajectories:
 The trajectories of a patch are predicted together with
 ``CoDiTModel.predict_batch`` (``--traj_batch`` per call), which gives the same
 results as one ``predict`` call per trajectory but keeps the GPU busy. Each
-trajectory's interpolator is stacked on the device (~0.7 GB for open_ocean at
-72 h), so lower ``--traj_batch`` if the GPU runs out of memory.
+trajectory's interpolator is stacked on the device (~80 MB for open_ocean at
+72 h, without the unused derivative array); lower ``--traj_batch`` if the GPU
+runs out of memory.
 
 Run on a machine with the test data, e.g.:
     python scripts/dev/debug/diagnose_prior_mismatch.py --dataset open_ocean
@@ -55,7 +56,7 @@ from tqdm import tqdm
 
 from codit.data_module import config_funcs, config_paths, data_transform
 from codit.data_module.data_transform import transform_traj_to_metre
-from codit.data_module.dataset import OceanDataset
+from codit.data_module.dataset import OceanDataset, drop_unused_derivatives
 from codit.eval_module.metrics import get_energy_score
 from codit.model_module.diffusion_model import CoDiTModel
 
@@ -76,8 +77,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--min_drift_km", type=float, default=5.0)
     p.add_argument(
         "--traj_batch", type=int, default=10,
-        help="trajectories per batched predict call; GPU memory ~0.7 GB each "
-             "(open_ocean, 72 h) for the stacked interpolators",
+        help="trajectories per batched predict call; the stacked interpolators "
+             "take ~80 MB each on the GPU (open_ocean, 72 h)",
     )
     p.add_argument("--seed", type=int, default=0)
     p.add_argument(
@@ -200,7 +201,10 @@ def main() -> None:
             y_true = to_model_units(coords, ref.std)
             trajs.append({
                 "idx": int(idx), "start_pos": start_pos, "start_time": start_time,
-                "interp": interp, "coords": coords, "key": key_pred,
+                # drop the unused derivative stack now, so the full-size
+                # interpolator is freed (~0.7 GB -> ~80 MB per trajectory)
+                "interp": drop_unused_derivatives(interp),
+                "coords": coords, "key": key_pred,
                 "starts": {
                     "noise": B,
                     "oracle": jnp.sqrt(ab_end) * y_true[None] + jnp.sqrt(1 - ab_end) * B,
