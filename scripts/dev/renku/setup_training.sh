@@ -15,18 +15,26 @@
 # Every step is skipped if its output already exists, so the script can be
 # re-run after an interruption.
 #
+# Data root: if CODIT_DATA_PATH is unset and a Renku persistent store is mounted
+# at ../store (i.e. /home/renku/work/store), data goes to ../store/codit_data so
+# it survives session restarts. Otherwise it defaults to <repo>/data.
+# The Python code only sees the data if CODIT_DATA_PATH is exported in every
+# shell / kernel that runs it -- set it as an environment variable of the Renku
+# session launcher (see the message printed at the end).
+# Trained checkpoints stay under CODIT_MODEL_PATH (default <repo>/data).
+#
 # Usage:
-#   bash scripts/dev/renku/setup_training.sh --dataset coastline
-#   bash scripts/dev/renku/setup_training.sh --dataset open_ocean --splits train,val,test
+#   bash scripts/dev/renku/setup_training.sh                      # open_ocean, all splits
+#   bash scripts/dev/renku/setup_training.sh --dataset coastline --splits train
 #
 # Then train, e.g.:
-#   python scripts/user/train/codit_train.py --dataset coastline --prediction_length 24
+#   python scripts/user/train/codit_train.py --dataset open_ocean --prediction_length 72
 
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-DATASET="coastline"
-SPLITS="train"
+DATASET="open_ocean"
+SPLITS="train,val,test"
 ZENODO_DIR=""
 LENGTH=""
 SKIP_INSTALL=0
@@ -37,15 +45,16 @@ usage() {
     awk 'NR > 1 && !/^#/ {exit} NR > 1 {sub(/^# ?/, ""); print}' "${BASH_SOURCE[0]}"
     cat <<EOF
 Options:
-  --dataset {coastline,open_ocean}   dataset to prepare (default: coastline)
-  --splits LIST                      comma-separated splits to extract (default: train)
+  --dataset {coastline,open_ocean}   dataset to prepare (default: open_ocean)
+  --splits LIST                      comma-separated splits to extract (default: train,val,test)
   --zenodo-dir DIR                   folder with the Zenodo tarballs
                                      (default: ../codit-ocean-* next to the repo)
   --length HOURS                     snippet length (default: 24 coastline, 72 open_ocean)
   --skip-install                     do not pip-install the codit package
   --skip-precompute                  only extract data, do not build the training h5
 Environment:
-  CODIT_DATA_PATH                    data root (default: <repo>/data)
+  CODIT_DATA_PATH                    data root (default: ../store/codit_data if
+                                     the Renku store is mounted, else <repo>/data)
   PYTHON                             python interpreter (default: python)
 EOF
 }
@@ -81,7 +90,16 @@ if [[ -z "$ZENODO_DIR" ]]; then
 fi
 ZENODO_DIR="$(cd "$ZENODO_DIR" && pwd)"
 
-export CODIT_DATA_PATH="${CODIT_DATA_PATH:-$REPO_ROOT/data}"
+STORE_DIR="$(cd "$REPO_ROOT/.." && pwd)/store"
+if [[ -z "${CODIT_DATA_PATH:-}" ]]; then
+    if [[ -d "$STORE_DIR" ]]; then
+        CODIT_DATA_PATH="$STORE_DIR/codit_data"
+    else
+        CODIT_DATA_PATH="$REPO_ROOT/data"
+    fi
+fi
+export CODIT_DATA_PATH
+mkdir -p "$CODIT_DATA_PATH"
 DATA_PATH="$CODIT_DATA_PATH"
 DS_ROOT="$DATA_PATH/datasets/$DATASET"
 
@@ -92,6 +110,25 @@ else
 fi
 
 log() { printf '\n==> %s\n' "$*"; }
+
+# The Renku store is an SMB/CIFS mount that refuses chmod/utime, so tar exits 2
+# with "Cannot utime" / "Cannot change mode" even though every file was written.
+# Ignore exactly those errors; fail on anything else.
+extract() {  # $1 = tarball, $2 = target dir
+    local errlog rc=0
+    errlog="$(mktemp)"
+    "${TAR_GZ[@]}" -xf "$1" --no-same-owner --no-same-permissions -m -C "$2" \
+        2> "$errlog" || rc=$?
+    local real_errors
+    real_errors="$(grep -v -e 'Cannot utime' -e 'Cannot change mode' \
+        -e 'Exiting with failure status due to previous errors' "$errlog" || true)"
+    rm -f "$errlog"
+    if [[ -n "$real_errors" ]] || (( rc > 2 )); then
+        echo "$real_errors" >&2
+        echo "tar failed on $1 (exit $rc)" >&2
+        return 1
+    fi
+}
 
 check_space() {  # $1 = tarball, $2 = target dir; warn if free space < 2x tarball
     local need avail
@@ -128,8 +165,7 @@ if [[ -d "$DATA_PATH/configs/$DATASET" ]]; then
     log "Configs for $DATASET already present"
 else
     log "Extracting ${DATASET}_configs.tar.gz"
-    "${TAR_GZ[@]}" -xf "$ZENODO_DIR/${DATASET}_configs.tar.gz" \
-        --no-same-owner -C "$DATA_PATH/configs"
+    extract "$ZENODO_DIR/${DATASET}_configs.tar.gz" "$DATA_PATH/configs"
 fi
 
 # 3. Dataset splits ----------------------------------------------------------------
@@ -146,7 +182,7 @@ for split in "${SPLIT_ARR[@]}"; do
     mkdir -p "$dest"
     check_space "$tarball" "$dest"
     log "Extracting $(basename "$tarball") -> $dest (this takes a while)"
-    "${TAR_GZ[@]}" -xf "$tarball" --no-same-owner -C "$dest"
+    extract "$tarball" "$dest"
     touch "$marker"
 done
 
@@ -185,6 +221,14 @@ else
         ln -sfn ../train/processed "$legacy"
         log "Linked $legacy -> ../train/processed"
     fi
+fi
+
+if [[ "${CODIT_DATA_PATH}" != "$REPO_ROOT/data" ]]; then
+    log "Data lives outside the repo. Make it visible to the Python code by"
+    echo "  setting this env var in the Renku session launcher (persists across sessions):"
+    echo "    CODIT_DATA_PATH=$CODIT_DATA_PATH"
+    echo "  or for the current shell only:"
+    echo "    export CODIT_DATA_PATH=$CODIT_DATA_PATH"
 fi
 
 log "Done. Train with:"

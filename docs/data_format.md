@@ -93,9 +93,12 @@ $CODIT_DATA_PATH/
 │   ├── open_ocean/datasets/processed/training_data_72h.h5   # shipped
 │   ├── coastline/datasets/processed/training_data_24h.h5    # shipped
 │   └── <your_dataset>/<split>/processed/training_data_<L>h.h5
-├── trained_models/{ckpts,configs,params}/
 ├── results/<dataset>/<split>/<model_name>/*.npz
 └── bathymetry/GEBCO_06_Jan_2025_.../*.nc
+
+$CODIT_MODEL_PATH/            # default <repo_root>/data, independent of CODIT_DATA_PATH
+├── trained_models/<model_name>/   # shipped checkpoints + final exports
+└── ckpts/<model_name>/            # intermediate training checkpoints
 ```
 
 Note the historical `datasets/processed/` nesting used by the shipped
