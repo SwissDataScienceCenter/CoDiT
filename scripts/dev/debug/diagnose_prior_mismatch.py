@@ -153,7 +153,9 @@ def main() -> None:
     rows = []
     key = random.PRNGKey(args.seed)
     checked = False
-    for config in tqdm(configs, desc="patches"):
+    patch_bar = tqdm(configs, desc="patches", position=0)
+    for config in patch_bar:
+        patch_bar.set_postfix_str(f"loading {config['name']}")
         try:
             ds = OceanDataset(config, L, 16, 10000, "linear")
         except Exception as e:  # noqa: BLE001 - skip unreadable patches, like codit_eval
@@ -161,11 +163,21 @@ def main() -> None:
             continue
         if len(ds) == 0:
             continue
-        for idx in np.unique(np.linspace(0, len(ds) - 1, args.per_patch, dtype=int)):
+        patch_bar.set_postfix_str(config["name"])
+        indices = np.unique(np.linspace(0, len(ds) - 1, args.per_patch, dtype=int))
+        # One tick per predict() call: trajectories x samplers x {noise, oracle}.
+        pred_bar = tqdm(
+            total=len(indices) * len(models) * 2,
+            desc="  predict",
+            position=1,
+            leave=False,
+        )
+        for idx in indices:
             try:
                 start_pos, start_time, _times, interp, coords = ds[int(idx)]
             except ValueError as e:
                 tqdm.write(f"skip {config['name']}[{idx}]: {e}")
+                pred_bar.update(len(models) * 2)
                 continue
             if not checked:
                 err = check_round_trip(coords, ref.std)
@@ -185,6 +197,7 @@ def main() -> None:
             }
             for sampler, model in models.items():
                 for start, y0 in starts.items():
+                    pred_bar.set_postfix_str(f"traj {idx} {sampler}/{start}")
                     try:
                         pred = model.predict(
                             start_pos, start_time, L, interp, ds,
@@ -192,11 +205,14 @@ def main() -> None:
                         )
                     except ValueError as e:
                         tqdm.write(f"skip {config['name']}[{idx}] {sampler}/{start}: {e}")
+                        pred_bar.update(1)
                         continue
+                    pred_bar.update(1)
                     rows.append(
                         {"patch": config["name"], "idx": int(idx), "sampler": sampler,
                          "start": start, **trajectory_metrics(pred, coords, hours)}
                     )
+        pred_bar.close()
         pd.DataFrame(rows).to_csv(
             os.path.join(args.out_dir, f"{args.model_name}_{args.split}.csv"), index=False
         )
