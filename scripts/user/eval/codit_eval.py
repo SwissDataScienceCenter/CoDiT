@@ -61,6 +61,20 @@ if __name__ == "__main__":
         default=72,
         help="Trajectory horizon in hours. Use 72 for open_ocean, 24 for coastline.",
     )
+    parser.add_argument(
+        "--sampler",
+        type=str,
+        default="ddpm",
+        choices=["ddpm", "heun"],
+        help="Reverse-diffusion sampler: 'ddpm' (ancestral, K steps; paper) or 'heun' "
+        "(deterministic EDM Heun sampler, see docs/EDM_IMPROVEMENTS.md).",
+    )
+    parser.add_argument(
+        "--num_sampling_steps",
+        type=int,
+        default=18,
+        help="Noise levels visited by the Heun sampler (2N-1 network evaluations).",
+    )
     args = parser.parse_args()
     np.random.seed(0)
 
@@ -73,6 +87,11 @@ if __name__ == "__main__":
         if args.run_name:
             model_name += f"_{args.run_name}"
     print(f"Model name: {model_name}")
+    # results of non-default samplers go to their own directory, so cached DDPM
+    # results are neither reused nor overwritten
+    result_name = model_name
+    if args.sampler != "ddpm":
+        result_name += f"_{args.sampler}{args.num_sampling_steps}"
     if args.dataset == "open_ocean":
         config_path = os.path.join(config_paths.CONFIG_PATH, "open_ocean", args.split)
         result_path = os.path.join(
@@ -80,7 +99,7 @@ if __name__ == "__main__":
             "open_ocean",
             args.split,
             args.result_subdir,
-            model_name,
+            result_name,
         )
         if not os.path.exists(result_path):
             os.makedirs(result_path)
@@ -91,7 +110,7 @@ if __name__ == "__main__":
             "coastline",
             args.split,
             args.result_subdir,
-            model_name,
+            result_name,
         )
         if not os.path.exists(result_path):
             os.makedirs(result_path)
@@ -112,6 +131,7 @@ if __name__ == "__main__":
 
     # model_name = f"diffusion_model_{args.dataset}_{args.model_type}_{args.context_encoder_type}_{args.optimizer}_{args.scheduler}"
     model = CoDiTModel.import_trained_model(model_name=model_name)
+    model.set_sampler(args.sampler, args.num_sampling_steps)
     num_predicted_traj = 0
     for val_dataname in tqdm(val_datasets):
         data_name = val_dataname.split(".")[0]
