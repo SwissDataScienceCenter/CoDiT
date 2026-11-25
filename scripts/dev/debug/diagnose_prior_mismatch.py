@@ -29,6 +29,8 @@ Reported per (sampler, start), over trajectories:
                 final hour (1.0 = right drift length; <1 = drift too short).
                 Median over trajectories with true displacement > --min_drift_km.
   spread_km     ensemble spread at the final hour (km)
+  nan_frac      share of samples that contain NaN (left the context grid); they
+                are excluded from all metrics above, as in get_energy_score
 
 Run on a machine with the test data, e.g.:
     python scripts/dev/debug/diagnose_prior_mismatch.py --dataset open_ocean
@@ -95,28 +97,42 @@ def check_round_trip(coords: jnp.ndarray, std: jnp.ndarray) -> float:
 def trajectory_metrics(
     pred: jnp.ndarray, coords: jnp.ndarray, hours: list[int]
 ) -> dict:
-    """pred: (S, L, 2) lat/lon; coords: (L+1, 2) truth including the start."""
+    """pred: (S, L, 2) lat/lon; coords: (L+1, 2) truth including the start.
+
+    Samples containing NaN (the rollout left the context grid, where the
+    interpolator returns NaN) are excluded from every metric, as
+    ``get_energy_score`` already does; their share is reported as ``nan_frac``.
+    """
+    true_m = transform_traj_to_metre(coords)[-1]  # (2,)
+    true_len2 = float(jnp.sum(true_m**2))
+    valid = ~np.isnan(np.asarray(pred)).any(axis=(1, 2))  # (S,)
+    out = {
+        "true_drift_km": float(jnp.sqrt(true_len2)) / 1000,
+        "nan_frac": float(1 - valid.mean()),
+    }
+    es = get_energy_score(coords[None, 1:], pred[None])[0]  # (L,), NaN-aware
+    for h in hours:
+        out[f"es_{h}h"] = float(es[h - 1]) / 1000
+    if not valid.any():
+        out.update({"drift_ratio": np.nan, "spread_km": np.nan})
+        out.update({f"err_{h}h": np.nan for h in hours})
+        return out
+
+    pred = pred[valid]
     dist = vmap(vmap(data_transform.haversine_distance), in_axes=(None, 0))(
         coords[1:], pred
-    )  # (S, L)
-    es = get_energy_score(coords[None, 1:], pred[None])[0]  # (L,)
+    )  # (S_valid, L)
     # displacement from the start in local metres (same transform as training)
     full = jnp.concatenate(
         [jnp.broadcast_to(coords[:1], (pred.shape[0], 1, 2)), pred], axis=1
     )
-    pred_m = vmap(transform_traj_to_metre)(full)[:, -1]  # (S, 2)
-    true_m = transform_traj_to_metre(coords)[-1]  # (2,)
-    true_len2 = float(jnp.sum(true_m**2))
-    out = {
-        "true_drift_km": float(jnp.sqrt(true_len2)) / 1000,
-        "drift_ratio": float(jnp.dot(pred_m.mean(0), true_m)) / true_len2
-        if true_len2 > 0
-        else np.nan,
-        "spread_km": float(jnp.sqrt(jnp.sum(pred_m.var(0)))) / 1000,
-    }
+    pred_m = vmap(transform_traj_to_metre)(full)[:, -1]  # (S_valid, 2)
+    out["drift_ratio"] = (
+        float(jnp.dot(pred_m.mean(0), true_m)) / true_len2 if true_len2 > 0 else np.nan
+    )
+    out["spread_km"] = float(jnp.sqrt(jnp.sum(pred_m.var(0)))) / 1000
     for h in hours:
         out[f"err_{h}h"] = float(dist[:, h - 1].mean()) / 1000
-        out[f"es_{h}h"] = float(es[h - 1]) / 1000
     return out
 
 
@@ -220,7 +236,9 @@ def main() -> None:
     df = pd.DataFrame(rows)
     if df.empty:
         raise SystemExit("No trajectories evaluated")
-    metric_cols = [f"err_{h}h" for h in hours] + [f"es_{h}h" for h in hours] + ["spread_km"]
+    metric_cols = (
+        [f"err_{h}h" for h in hours] + [f"es_{h}h" for h in hours] + ["spread_km", "nan_frac"]
+    )
     moving = df[df["true_drift_km"] > args.min_drift_km]
 
     print(f"\n{df[['patch', 'idx']].drop_duplicates().shape[0]} trajectories, "
