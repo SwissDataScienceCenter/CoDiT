@@ -43,6 +43,8 @@ DATASET_URLS: dict[str, dict[str, str]] = {
 }
 
 BATHYMETRY_URL = "https://polybox.ethz.ch/index.php/s/Gp6zM2JindN6nHA/download"
+# Must match the folder name used in codit.data_module.context_functions.load_data.
+BATHYMETRY_SUBDIR = "GEBCO_06_Jan_2025_ba69ac5d6a3b"
 
 
 def download_file(url: str, dest: str) -> None:
@@ -100,12 +102,20 @@ def download_bathymetry(data_path: str, dry_run: bool = False) -> None:
         return
     os.makedirs(data_path, exist_ok=True)
     download_file(BATHYMETRY_URL, zippath)
-    # Zip has a top-level `bathymetry/` folder — extract into data_path so
-    # the final layout is data_path/bathymetry/GEBCO_.../*.nc.
+    # Zip has a top-level `bathymetry/` folder — extract into data_path, then
+    # make sure the final layout is data_path/bathymetry/GEBCO_.../*.nc, which
+    # is where context_functions.load_data looks for the tiles.
     print(f"  Extracting {os.path.basename(zippath)} -> {data_path}")
     with zipfile.ZipFile(zippath) as zf:
         zf.extractall(path=data_path)
     os.remove(zippath)
+    bathy_dir = os.path.join(data_path, "bathymetry")
+    gebco_dir = os.path.join(bathy_dir, BATHYMETRY_SUBDIR)
+    os.makedirs(gebco_dir, exist_ok=True)
+    for name in os.listdir(bathy_dir):
+        src = os.path.join(bathy_dir, name)
+        if os.path.isfile(src):
+            os.replace(src, os.path.join(gebco_dir, name))
     print("=== bathymetry complete ===")
 
 
