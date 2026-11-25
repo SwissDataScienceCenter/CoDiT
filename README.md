@@ -171,6 +171,12 @@ Key arguments:
 | `--scheduler` | `constant` | LR schedule: `constant` or `cosine` |
 | `--early_stopping_patience` | `10` | Epochs without val improvement before stopping |
 | `--run_name` | `""` | Optional suffix appended to the model checkpoint name |
+| `--legacy_context` | off | Use the legacy context layout of the shipped checkpoints (see below) |
+
+**Context alignment.** The shipped checkpoints were trained with the context reaching the
+denoiser one step late (the step into position j saw context up to c_{j-2} instead of c_{j-1}).
+This is fixed for new models (`aligned_context: True`). Checkpoints without the key load with the
+legacy layout, so the paper results are unchanged; `--legacy_context` retrains with it.
 
 During training, intermediate checkpoints are written under
 `data/ckpts/<model_name>/`; on completion, the final model is exported to

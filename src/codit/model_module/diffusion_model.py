@@ -216,6 +216,8 @@ class CoDiTModel(BaseTrajectoryModel):
             - ``vars`` (list[str]): context variable names used to select ``var_idx``
             - ``noise`` (str): noise model type, ``"brownian_motion"`` (default)
             - ``beta_min`` / ``beta_max`` (float): diffusion schedule bounds (defaults ``1e-4`` / ``0.02``)
+            - ``aligned_context`` (bool): ``False`` for the legacy context layout of older
+              checkpoints (default ``True``)
 
     Example::
 
@@ -270,6 +272,7 @@ class CoDiTModel(BaseTrajectoryModel):
             "max_len": 100,
             "num_heads": 8,
             "context_encoder_type": "conv",  # conv, mlp, gap
+            "aligned_context": True,
         }
         params = default_params | params
         super().__init__(name, params)
@@ -329,6 +332,7 @@ class CoDiTModel(BaseTrajectoryModel):
         )
         self.nn_params = None
         self._denoise_func: Optional[Callable] = None  # cached jit-compiled step function
+        self.aligned_context = bool(params["aligned_context"])
 
     def center_and_scale_data(self, trajectory: jnp.ndarray) -> jnp.ndarray:
         if len(trajectory.shape) == 2:
@@ -506,6 +510,7 @@ class CoDiTModel(BaseTrajectoryModel):
                 early_stopping_min_delta=train_params.get(
                     "early_stopping_min_delta", 1e-4
                 ),
+                aligned_context=self.aligned_context,
             )
             writer.close()
             print("storing", self.ckpt_dir)
@@ -523,6 +528,7 @@ class CoDiTModel(BaseTrajectoryModel):
                 loss_list=loss_list,
                 val_loss_list=val_loss_list,
                 std=self.std,
+                aligned_context=self.aligned_context,
             )
             self.nn_params = params
             self._denoise_func = None  # invalidate cached jit (nn_params changed)
@@ -533,9 +539,20 @@ class CoDiTModel(BaseTrajectoryModel):
         trained_model = jnp.load(
             os.path.join(self.ckpt_dir, "final", "params.npz"), allow_pickle=True
         )
+        # older checkpoints use the legacy context layout
+        ckpt_aligned = bool(trained_model["aligned_context"]) \
+            if "aligned_context" in trained_model else False
+        if ckpt_aligned != self.aligned_context:
+            raise ValueError(
+                f"checkpoint {self.ckpt_dir} was trained with aligned_context={ckpt_aligned}, "
+                f"the model has aligned_context={self.aligned_context}: set it to match, or retrain")
         self.nn_params = trained_model["params"]
         self._denoise_func = None  # invalidate cached jit (nn_params changed)
         self.std = trained_model["std"]
+
+    def _context_slot(self, i: int) -> int:
+        """Slot in ``prediction_context`` of the context sampled at predicted position ``i``."""
+        return i - 1 if self.aligned_context else i
 
     def predict(
         self,
@@ -676,8 +693,9 @@ class CoDiTModel(BaseTrajectoryModel):
                     start_position, interpolator,
                 )
             coords_denoised.append(new_coord)
+            j = self._context_slot(i)
             batch["prediction_context"] = (
-                batch["prediction_context"].at[:, i : i + 1].set(new_context)
+                batch["prediction_context"].at[:, j : j + 1].set(new_context)
             )  # jnp.concatenate([batch['prediction_context'], new_context], axis=1)
             batch["history_target_vals"] = jnp.zeros((num_samples, 1, 2))
             batch["history_context"] = jnp.tile(
@@ -770,6 +788,8 @@ class CoDiTModel(BaseTrajectoryModel):
 
         with open(config_file, "r") as f:
             model_config = yaml.safe_load(f)
+        # older checkpoints use the legacy context layout
+        model_config.setdefault("aligned_context", False)
 
         nn_params_path = os.path.join(model_path, "nn_params.npz")
         if not os.path.exists(nn_params_path):

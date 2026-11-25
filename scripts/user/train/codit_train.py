@@ -43,6 +43,12 @@ if __name__ == "__main__":
     )
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument(
+        "--legacy_context",
+        action="store_true",
+        default=False,
+        help="Use the legacy context layout of older checkpoints",
+    )
+    parser.add_argument(
         "--prediction_length",
         type=int,
         default=72,
@@ -86,6 +92,7 @@ if __name__ == "__main__":
             "context_encoder_type": args.context_encoder_type,
             "K": args.K,
             "vars": args.input_vars,
+            "aligned_context": not args.legacy_context,
         },
     )
     if args.scheduler == "cosine":
