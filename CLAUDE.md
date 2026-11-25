@@ -88,7 +88,7 @@ When working on JAX-related code (models, transforms, PRNG, JIT, vmap), invoke t
 - **NumPy, SciPy, Pandas** for data processing
 - **Cartopy, Matplotlib** for geospatial plotting
 - **WandB** for experiment tracking
-- **micromamba** with `codit` environment (current setup), transitioning to reproducible env
+- **pip** install from `pyproject.toml` (`uv_build` backend); a conda/micromamba env named `codit` is used on the cluster
 - **Black, Ruff, Mypy** for code quality
 
 ## Running
