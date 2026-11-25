@@ -116,7 +116,7 @@ def test_val_loss_is_deterministic_and_patience_is_exact(setup):
 def test_returns_parameters_of_best_epoch(setup, ema):
     # sensible lr for epoch 0 (5 steps), then a huge one: later epochs get worse or NaN
     lr = optax.piecewise_constant_schedule(1e-2, {5: 1e6})
-    (best, _, _, val_losses, info), _ = _run(setup, lr=lr, num_epochs=4, patience=10, ema=ema)
+    (best, _, _, val_losses, _), _ = _run(setup, lr=lr, num_epochs=4, patience=10, ema=ema)
     assert np.isfinite(val_losses[0])
     best_epoch = int(np.nanargmin(val_losses))
     assert best_epoch < len(val_losses) - 1, "test needs a run that gets worse"
