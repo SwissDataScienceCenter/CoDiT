@@ -29,6 +29,20 @@ if __name__ == "__main__":
     parser.add_argument("--scheduler", type=str, default="constant")  # constant, cosine
     parser.add_argument("--K", type=int, default=100)  # number of diffusion steps
     parser.add_argument(
+        "--noise_schedule",
+        type=str,
+        default="linear",
+        choices=["linear", "cosine"],
+        help="Diffusion beta schedule. 'linear' (beta_max 0.02) reproduces the paper; "
+        "'cosine' (beta_max 0.2) ends at pure noise, matching the sampler's start.",
+    )
+    parser.add_argument(
+        "--beta_max",
+        type=float,
+        default=None,
+        help="Final beta of the schedule (default: 0.02 linear, 0.2 cosine)",
+    )
+    parser.add_argument(
         "--input_vars",
         nargs="+",
         type=str,
@@ -80,6 +94,10 @@ if __name__ == "__main__":
     input_vars = args.input_vars
     input_var_str = "_".join(input_vars)
     model_name = f"codit_{args.model_type}_{args.dataset}_{args.context_encoder_type}_{args.optimizer}_K{args.K}_{input_var_str}"
+    if args.noise_schedule != "linear":
+        model_name += f"_{args.noise_schedule}"
+    if args.beta_max is not None:
+        model_name += f"_bmax{args.beta_max:g}"
     if args.run_name:
         model_name += f"_{args.run_name}"
     print(f"Model name: {model_name}")
@@ -91,6 +109,8 @@ if __name__ == "__main__":
             "model_type": args.model_type,
             "context_encoder_type": args.context_encoder_type,
             "K": args.K,
+            "noise_schedule": args.noise_schedule,
+            "beta_max": args.beta_max,
             "vars": args.input_vars,
             "aligned_context": not args.legacy_context,
         },

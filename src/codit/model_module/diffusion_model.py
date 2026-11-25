@@ -162,6 +162,13 @@ def denoise(
 # see the warning in CoDiTModel.set_sampler.
 HEUN_MAX_TERMINAL_ALPHA_BAR = 1e-3
 
+# Noise schedules selectable via the ``noise_schedule`` param, with their default beta_max.
+NOISE_SCHEDULES = {
+    "linear": scheduler.linear_schedule,
+    "cosine": scheduler.cosine_schedule,
+}
+DEFAULT_BETA_MAX = {"linear": 0.02, "cosine": 0.2}
+
 
 def edm_sigmas(alpha_bar: jnp.ndarray) -> jnp.ndarray:
     """Noise level of each DDPM step in EDM (variance-exploding) form.
@@ -360,7 +367,13 @@ class CoDiTModel(BaseTrajectoryModel):
             - ``diffusion_emb`` (int): diffusion-timestep embedding size (default ``64``)
             - ``vars`` (list[str]): context variable names used to select ``var_idx``
             - ``noise`` (str): noise model type, ``"brownian_motion"`` (default)
-            - ``beta_min`` / ``beta_max`` (float): diffusion schedule bounds (defaults ``1e-4`` / ``0.02``)
+            - ``noise_schedule`` (str): ``"linear"`` (default; used for the paper and all
+              shipped checkpoints) or ``"cosine"`` (beta follows a cosine ramp, see
+              ``scheduler.cosine_schedule``). The paper's linear schedule with
+              ``beta_max=0.02`` and K=100 ends at alpha_bar=0.36, far from the pure-noise
+              start of sampling; the cosine default ends at alpha_bar~2e-5.
+            - ``beta_min`` / ``beta_max`` (float): diffusion schedule bounds (defaults
+              ``1e-4`` / ``0.02`` for ``linear``, ``1e-4`` / ``0.2`` for ``cosine``)
             - ``aligned_context`` (bool): ``False`` for the legacy context layout of older
               checkpoints (default ``True``)
             - ``sampler`` (str): ``"ddpm"`` (ancestral, K steps; default, used for the
@@ -401,7 +414,7 @@ class CoDiTModel(BaseTrajectoryModel):
             type (str): Always ``"diffusion"``.
             model (nn.Module): Flax denoiser (GRU or Transformer).
             noise_model (WalkNoiseModel): Brownian noise process.
-            schedule_dict (dict): Precomputed linear beta schedule for K steps.
+            schedule_dict (dict): Precomputed beta schedule for K steps.
             ckpt_dir (str): Absolute path to the model's checkpoint directory.
             nn_params: Set to ``None`` at construction; populated by ``fit`` or
                 ``import_trained_model``.
@@ -417,7 +430,8 @@ class CoDiTModel(BaseTrajectoryModel):
             "sigma": 1.0,
             "dt": 0.1,
             "beta_min": 1e-4,
-            "beta_max": 0.02,  # before 0.02
+            "noise_schedule": "linear",
+            "beta_max": None,  # resolved per schedule below
             "noise": "brownian_motion",
             "interp_method": "linear",
             "max_len": 100,
@@ -429,6 +443,13 @@ class CoDiTModel(BaseTrajectoryModel):
             "rho": 7.0,
         }
         params = default_params | params
+        if params["noise_schedule"] not in NOISE_SCHEDULES:
+            raise ValueError(
+                f"Unknown noise_schedule {params['noise_schedule']!r}: "
+                f"use one of {sorted(NOISE_SCHEDULES)}"
+            )
+        if params["beta_max"] is None:
+            params["beta_max"] = DEFAULT_BETA_MAX[params["noise_schedule"]]
         super().__init__(name, params)
         model_type = params.get("model_type", default_params["model_type"])
         context_encoder_type = params.get(
@@ -471,10 +492,8 @@ class CoDiTModel(BaseTrajectoryModel):
                 num_heads=num_heads,
                 context_encoder_type=context_encoder_type,
             )
-        self.schedule_dict = scheduler.linear_schedule(
-            K,
-            beta_min=params.get("beta_min", default_params["beta_min"]),
-            beta_max=params.get("beta_max", default_params["beta_max"]),
+        self.schedule_dict = NOISE_SCHEDULES[params["noise_schedule"]](
+            K, beta_min=params["beta_min"], beta_max=params["beta_max"]
         )
 
         self.noise_model = WalkNoiseModel(
