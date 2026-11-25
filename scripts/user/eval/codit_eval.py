@@ -1,4 +1,5 @@
 import argparse
+import gc
 import os
 
 # mute SerializationWarning
@@ -83,6 +84,14 @@ if __name__ == "__main__":
         help="'default': the exported model (EMA weights if trained with EMA); "
         "'raw': the best non-EMA weights of an EMA-trained model, for comparison.",
     )
+    parser.add_argument(
+        "--max_per_patch",
+        type=int,
+        default=0,
+        help="Evaluate at most this many trajectories per patch, evenly spaced (the "
+        "same ones for every model, so results can be compared pairwise). 0 = all. "
+        "Use with --result_subdir to keep partial results apart from full ones.",
+    )
     args = parser.parse_args()
     np.random.seed(0)
 
@@ -143,7 +152,11 @@ if __name__ == "__main__":
     model = CoDiTModel.import_trained_model(model_name=model_name, weights=args.weights)
     model.set_sampler(args.sampler, args.num_sampling_steps)
     num_predicted_traj = 0
+    test_dataset = None
     for val_dataname in tqdm(val_datasets):
+        # release the previous patch (tens of GB) before loading the next one
+        test_dataset = None
+        gc.collect()
         data_name = val_dataname.split(".")[0]
         result_file = os.path.join(result_path, f"{data_name}_result.npz")
         if not os.path.exists(result_file):
@@ -157,7 +170,11 @@ if __name__ == "__main__":
             if len(test_dataset) == 0:
                 tqdm.write(f"Empty dataset: {val_dataname}")
                 continue
-            if args.evaluate_subset and len(test_dataset) > 200:
+            if args.max_per_patch and len(test_dataset) > args.max_per_patch:
+                indices = np.linspace(
+                    0, len(test_dataset) - 1, args.max_per_patch, dtype=int
+                )
+            elif args.evaluate_subset and len(test_dataset) > 200:
                 # select 200 regularly spaced indices from the dataset
                 indices = np.linspace(0, len(test_dataset) - 1, 200, dtype=int)
             else:
