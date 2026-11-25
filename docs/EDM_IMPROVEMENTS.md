@@ -5,8 +5,14 @@ Design Space of Diffusion-Based Generative Models* (EDM, NeurIPS 2022).
 Review date: 2026-11-25. Item 2 (Heun sampler) is implemented on `feature/heun-sampler`
 (see its status section); nothing else has been implemented yet.
 
-Items 1, 3, 4 and 6 (EMA) require retraining and will change the paper numbers.
-Item 2 can be tried on the shipped checkpoints.
+The paper is published, so these are improvements to the codebase. The published
+results must stay reproducible:
+
+- Keep the shipped checkpoints and `sampler="ddpm"` as the default.
+- Ship any retrained model as a new, separately named checkpoint next to the published
+  ones, not as a replacement.
+
+Items 1, 3, 4 and 6 (EMA) require retraining. Item 2 runs on the shipped checkpoints.
 
 ## Current setup (shipped defaults)
 
@@ -71,9 +77,9 @@ once from pure noise, and once from an exact draw of the trained forward margina
 paired difference (noise − oracle) in error, energy score, spread and drift ratio is the
 cost of the mismatch.
 
-- Gap within the ±2 s.e. band or under ~1 km: the fix can wait until after the paper
-  revision.
-- Gap of several km: worth retraining.
+- Gap within the ±2 s.e. band or under ~1 km: the schedule is not a practical problem
+  for the shipped models; fix it only as part of a larger retrain (items 3–4).
+- Gap of several km: retraining with a corrected schedule is worthwhile on its own.
 
 ## 2. Deterministic Heun sampler (EDM Algorithm 1)
 
@@ -92,8 +98,8 @@ cost of the mismatch.
   σ_k = √((1−ᾱ_k)/ᾱ_k), x_EDM = x_VP / √ᾱ_k, and run Heun on a subset of the 100
   trained noise levels. This is still limited by item 1 (σ_max ≈ 1.3).
 
-**Validation:** check that CRPS and errors on the test split match the paper numbers
-at lower cost.
+**Validation:** check that CRPS and errors on the test split match the published
+numbers at lower cost.
 
 ### Status (2026-11-25, branch `feature/heun-sampler`)
 
@@ -176,4 +182,5 @@ The churn noise must be pre-sampled like `W` to keep rollout consistency.
 2. Fix item 1 (β_max or continuous σ), retrain, then evaluate both `ddpm` and `heun`
    on that model.
 3. Items 3 + 4 together as one EDM rewrite on a separate branch off `dev`, then item 5
-   and EMA. Compare against the paper numbers before replacing anything.
+   and EMA. Benchmark against the published numbers and ship as new checkpoints; the
+   published models and DDPM code path stay available for reproduction.
