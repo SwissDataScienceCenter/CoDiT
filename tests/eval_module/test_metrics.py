@@ -114,6 +114,96 @@ class TestGetEnergyScore:
         assert hasattr(score, "shape")
 
 
+def _haversine_np(a, b):
+    """Great-circle distance in metres between (..., 2) lat/lon arrays."""
+    a, b = np.radians(a), np.radians(b)
+    dlat, dlon = b[..., 0] - a[..., 0], b[..., 1] - a[..., 1]
+    h = (
+        np.sin(dlat / 2) ** 2
+        + np.cos(a[..., 0]) * np.cos(b[..., 0]) * np.sin(dlon / 2) ** 2
+    )
+    return 2 * 6371000.0 * np.arcsin(np.sqrt(h))
+
+
+def _energy_score_reference(true_coords, pred_coords):
+    """Brute-force energy score: at each (n, t), use only the finite samples."""
+    true_coords, pred_coords = np.asarray(true_coords), np.asarray(pred_coords)
+    n_traj, _, n_t, _ = pred_coords.shape
+    out = np.full((n_traj, n_t), np.nan)
+    for n in range(n_traj):
+        for t in range(n_t):
+            x = pred_coords[n, :, t]
+            x = x[~np.isnan(x).any(axis=-1)]
+            if len(x) == 0:
+                continue
+            err = np.mean([_haversine_np(true_coords[n, t], xi) for xi in x])
+            spread = np.mean([_haversine_np(xi, xj) for xi in x for xj in x])
+            out[n, t] = err - 0.5 * spread
+    return out
+
+
+def _random_ensemble(n=3, s=8, t=6, seed=0):
+    rng = np.random.default_rng(seed)
+    true = np.stack(
+        [np.full((n, t), 45.0), np.tile(np.linspace(0.0, 0.5, t), (n, 1))], axis=-1
+    )
+    pred = true[:, None] + rng.normal(0.0, 0.05, (n, s, t, 2))
+    return true, pred
+
+
+class TestEnergyScoreNaN:
+    """Samples that leave the context grid become NaN from some timestep on."""
+
+    def test_matches_reference_without_nan(self):
+        true, pred = _random_ensemble()
+        score = get_energy_score(jnp.array(true), jnp.array(pred))
+        np.testing.assert_allclose(
+            score, _energy_score_reference(true, pred), rtol=1e-4
+        )
+
+    def test_partially_nan_sample_counts_where_finite(self):
+        true, pred = _random_ensemble()
+        pred[0, 0, 3:] = np.nan  # sample 0 of traj 0 leaves the grid at t=3
+        pred[1, 2, 5:, 1] = np.nan  # a single NaN coordinate also invalidates
+        score = np.asarray(get_energy_score(jnp.array(true), jnp.array(pred)))
+        np.testing.assert_allclose(
+            score, _energy_score_reference(true, pred), rtol=1e-4
+        )
+
+    def test_before_nan_equals_full_ensemble(self):
+        true, pred = _random_ensemble()
+        full = np.asarray(get_energy_score(jnp.array(true), jnp.array(pred)))
+        pred_nan = pred.copy()
+        pred_nan[0, 0, 3:] = np.nan
+        part = np.asarray(get_energy_score(jnp.array(true), jnp.array(pred_nan)))
+        np.testing.assert_allclose(part[0, :3], full[0, :3], rtol=1e-5)
+        np.testing.assert_allclose(part[1:], full[1:], rtol=1e-5)
+
+    def test_after_nan_equals_ensemble_without_sample(self):
+        true, pred = _random_ensemble()
+        pred_nan = pred.copy()
+        pred_nan[0, 0, 3:] = np.nan
+        part = np.asarray(get_energy_score(jnp.array(true), jnp.array(pred_nan)))
+        dropped = np.asarray(
+            get_energy_score(jnp.array(true[:1]), jnp.array(pred[:1, 1:]))
+        )
+        np.testing.assert_allclose(part[0, 3:], dropped[0, 3:], rtol=1e-5)
+
+    def test_all_samples_nan_gives_nan(self):
+        true, pred = _random_ensemble()
+        pred[0, :, 4] = np.nan
+        score = np.asarray(get_energy_score(jnp.array(true), jnp.array(pred)))
+        assert np.isnan(score[0, 4])
+        assert np.isfinite(np.delete(score.ravel(), 4)).all()
+
+    def test_nan_truth_gives_nan(self):
+        true, pred = _random_ensemble()
+        true[2, 1] = np.nan
+        score = np.asarray(get_energy_score(jnp.array(true), jnp.array(pred)))
+        assert np.isnan(score[2, 1])
+        assert np.isfinite(np.delete(score.ravel(), 2 * score.shape[1] + 1)).all()
+
+
 class TestGetSkillScore:
     """true_coords has T+1 rows; pred_coords has T rows."""
 
@@ -167,9 +257,9 @@ class TestGetHaversineError4D:
         coords = _stationary_coords(n=3, t=6)
         pred_4d = coords[:, None, :, :]  # (N, 1, T, 2)
         error = get_haversine_error(coords, pred_4d)
-        assert jnp.all(
-            jnp.abs(error) < 1.0
-        ), "Error should be ~0 m when pred equals true"
+        assert jnp.all(jnp.abs(error) < 1.0), (
+            "Error should be ~0 m when pred equals true"
+        )
 
     def test_larger_shift_gives_larger_error_4d(self):
         n, s, t = 4, 10, 10
@@ -230,9 +320,9 @@ class TestGetEnergyScore4D:
         coords = _stationary_coords(n=n, t=t)
         pred_4d = jnp.tile(coords[:, None, :, :], (1, s, 1, 1))
         score = get_energy_score(coords, pred_4d)
-        assert jnp.all(
-            jnp.abs(score) < 1.0
-        ), "Energy score should be ~0 when pred equals true"
+        assert jnp.all(jnp.abs(score) < 1.0), (
+            "Energy score should be ~0 when pred equals true"
+        )
 
     def test_non_negative_for_dispersed_predictions(self):
         """Energy score must be >= 0 by definition."""
@@ -244,9 +334,9 @@ class TestGetEnergyScore4D:
             + rng.normal(scale=0.5, size=(n, s, t, 2))
         )
         score = get_energy_score(true, pred)
-        assert jnp.all(
-            score >= -1.0
-        ), "Energy score should be >= 0 (allowing small numerics)"
+        assert jnp.all(score >= -1.0), (
+            "Energy score should be >= 0 (allowing small numerics)"
+        )
 
     def test_consistent_with_3d_single_sample(self):
         """4-D with S=1 should give the same result as 3-D input."""
