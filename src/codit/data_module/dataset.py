@@ -6,7 +6,6 @@ import h5py
 import jax
 import numpy as np
 import pandas as pd
-import xarray as xr
 from interpax import Interpolator3D
 from jax import numpy as jnp
 from jax import vmap
@@ -72,7 +71,7 @@ class OceanDataset(Dataset):
         Returns:
             A list of dictionaries containing the trajectories.
         """
-        trajectory = xr.open_dataset(self.config["trajectories_file"])
+        trajectory = utils.open_netcdf(self.config["trajectories_file"])
         traj_df = pd.DataFrame(
             trajectory[["ID", "time", "latitude", "longitude"]].to_array().T,
             columns=["ID", "time", "latitude", "longitude"],

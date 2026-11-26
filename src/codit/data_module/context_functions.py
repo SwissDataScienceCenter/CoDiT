@@ -13,7 +13,7 @@ import xarray as xr
 from jax import numpy as jnp
 from jax import vmap
 
-from codit.data_module import config_paths, data_transform
+from codit.data_module import config_paths, data_transform, utils
 
 logging.basicConfig(level=logging.INFO)
 
@@ -123,7 +123,7 @@ def load_data(
             f"longitudes {longitudes}. The patch either spans a tile boundary "
             "outside the overlap zones or wraps across the antimeridian."
         )
-    bathy = xr.open_dataset(
+    bathy = utils.open_netcdf(
         os.path.join(
             config_paths.DATA_PATH,
             "bathymetry",
@@ -133,7 +133,7 @@ def load_data(
     )
 
     bathy = bathy.rename({"lat": "latitude", "lon": "longitude"})
-    hycom_data = xr.open_dataset(config["hycom_file"]).isel(depth=0, drop=True)
+    hycom_data = utils.open_netcdf(config["hycom_file"]).isel(depth=0, drop=True)
     hycom_data = hycom_data.drop_duplicates(dim="lon").drop_duplicates(dim="lat")
     hycom_data = hycom_data.drop_duplicates(dim="time")
     hycom_data = hycom_data.rename({"lat": "latitude", "lon": "longitude"})
@@ -147,7 +147,7 @@ def load_data(
         longitude=slice(hycom_data["longitude"].min(), hycom_data["longitude"].max()),
     )
     try:
-        era5_data = xr.open_dataset(config["era5_file"])
+        era5_data = utils.open_netcdf(config["era5_file"])
     except ValueError:
         # unzip file
         logging.info("Unzipping file")
@@ -155,11 +155,11 @@ def load_data(
             zip_ref.extractall(config["era5_file"].replace(".nc", "") + "/")
         # load parts
         logging.info("Loading parts")
-        stream = xr.open_dataset(
+        stream = utils.open_netcdf(
             config["era5_file"].replace(".nc", "")
             + "/data_stream-oper_stepType-instant.nc"
         )
-        wave = xr.open_dataset(
+        wave = utils.open_netcdf(
             config["era5_file"].replace(".nc", "")
             + "/data_stream-wave_stepType-instant.nc"
         )
@@ -173,7 +173,7 @@ def load_data(
         # save the merged dataset
         logging.info("Saving")
         era5_data.to_netcdf(config["era5_file"])
-        era5_data = xr.open_dataset(config["era5_file"])
+        era5_data = utils.open_netcdf(config["era5_file"])
 
     if era5_data["latitude"][0] > era5_data["latitude"][-1]:
         era5_data = era5_data.sel(latitude=slice(None, None, -1))
@@ -186,7 +186,7 @@ def load_data(
         latitude=slice(latitudes[0], latitudes[1]),
         longitude=slice(longitudes[0], longitudes[1]),
     )
-    copernicus_data = xr.open_dataset(config["copernicus_daily_file"]).isel(
+    copernicus_data = utils.open_netcdf(config["copernicus_daily_file"]).isel(
         depth=0, drop=True
     )
     copernicus_data = copernicus_data.sel(
