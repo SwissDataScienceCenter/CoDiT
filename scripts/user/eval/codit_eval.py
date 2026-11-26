@@ -63,20 +63,6 @@ if __name__ == "__main__":
         help="Trajectory horizon in hours. Use 72 for open_ocean, 24 for coastline.",
     )
     parser.add_argument(
-        "--sampler",
-        type=str,
-        default="ddpm",
-        choices=["ddpm", "heun"],
-        help="Reverse-diffusion sampler: 'ddpm' (ancestral, K steps; paper) or 'heun' "
-        "(deterministic EDM Heun sampler, see docs/EDM_IMPROVEMENTS.md).",
-    )
-    parser.add_argument(
-        "--num_sampling_steps",
-        type=int,
-        default=18,
-        help="Noise levels visited by the Heun sampler (2N-1 network evaluations).",
-    )
-    parser.add_argument(
         "--weights",
         type=str,
         default="default",
@@ -104,11 +90,9 @@ if __name__ == "__main__":
         if args.run_name:
             model_name += f"_{args.run_name}"
     print(f"Model name: {model_name}")
-    # results of non-default samplers go to their own directory, so cached DDPM
-    # results are neither reused nor overwritten
+    # results of the raw weights go to their own directory, so cached results of the
+    # exported model are neither reused nor overwritten
     result_name = model_name
-    if args.sampler != "ddpm":
-        result_name += f"_{args.sampler}{args.num_sampling_steps}"
     if args.weights != "default":
         result_name += f"_{args.weights}"
     if args.dataset == "open_ocean":
@@ -150,7 +134,6 @@ if __name__ == "__main__":
 
     # model_name = f"diffusion_model_{args.dataset}_{args.model_type}_{args.context_encoder_type}_{args.optimizer}_{args.scheduler}"
     model = CoDiTModel.import_trained_model(model_name=model_name, weights=args.weights)
-    model.set_sampler(args.sampler, args.num_sampling_steps)
     num_predicted_traj = 0
     test_dataset = None
     for val_dataname in tqdm(val_datasets):

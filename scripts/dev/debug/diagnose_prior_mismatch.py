@@ -19,9 +19,6 @@ The paired difference (noise - oracle) is the cost of the schedule mismatch for
 the real network. A gap near zero means the schedule fix (cosine schedule /
 retraining) can wait; a gap of several km means it is worth a retrain.
 
-With ``--samplers ddpm heun`` it also shows whether the deterministic Heun
-sampler becomes unbiased once the start is right.
-
 Reported per (sampler, start), over trajectories:
   err_{h}h      mean haversine error of samples vs truth at hour h (km)
   es_{h}h       energy score at hour h (km)
@@ -67,8 +64,6 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--num_patches", type=int, default=20, help="patches, evenly spaced")
     p.add_argument("--per_patch", type=int, default=10, help="trajectories per patch")
     p.add_argument("--num_samples", type=int, default=50)
-    p.add_argument("--samplers", nargs="+", default=["ddpm"], choices=["ddpm", "heun"])
-    p.add_argument("--num_sampling_steps", type=int, default=18, help="Heun levels")
     p.add_argument("--min_drift_km", type=float, default=5.0)
     p.add_argument("--seed", type=int, default=0)
     p.add_argument(
@@ -141,11 +136,9 @@ def main() -> None:
     L = args.prediction_length
     hours = sorted({h for h in (24, 48, 72) if h <= L} | {L})
 
-    models = {}
-    for sampler in args.samplers:
-        m = CoDiTModel.import_trained_model(args.model_name)
-        m.set_sampler(sampler, args.num_sampling_steps)
-        models[sampler] = m
+    # keyed by sampler so the output keeps the format of earlier runs, which
+    # also compared the since-removed Heun sampler
+    models = {"ddpm": CoDiTModel.import_trained_model(args.model_name)}
     ref = next(iter(models.values()))
     ab_end = float(ref.schedule_dict["alpha_bar"][-1])
     print(
@@ -249,7 +242,7 @@ def main() -> None:
     print(summary.round(3).to_string())
 
     print("\nPaired cost of the mismatch, noise - oracle (mean ± 2 s.e.):")
-    for sampler in args.samplers:
+    for sampler in models:
         sub = df[df["sampler"] == sampler].pivot_table(
             index=["patch", "idx"], columns="start", values=metric_cols
         )
