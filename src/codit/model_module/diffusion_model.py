@@ -3,6 +3,7 @@ import os
 import pickle
 import shutil
 import warnings
+from collections.abc import Sequence
 from typing import Callable, Optional
 
 # Suppress the SerializationWarning
@@ -808,6 +809,7 @@ class CoDiTModel(BaseTrajectoryModel):
         key: jax.Array = random.PRNGKey(0),
         return_denoising_steps: bool = False,
         initial_y: jnp.ndarray | None = None,
+        denoising_steps_hours: Sequence[int] | None = None,
     ) -> jnp.ndarray | tuple[jnp.ndarray, jnp.ndarray]:
         """Sample trajectory predictions from the trained diffusion model.
 
@@ -833,6 +835,12 @@ class CoDiTModel(BaseTrajectoryModel):
                 model's centred and scaled units. Default ``None`` draws it from
                 the noise model. Used by
                 ``scripts/dev/debug/diagnose_prior_mismatch.py``.
+            denoising_steps_hours: Diagnostics only. With ``return_denoising_steps``,
+                return the denoising steps of the solves at these hours (1-based,
+                in increasing order) instead of only the last one, with an extra
+                hour axis after the sample axis.
+                Default ``None`` keeps the last hour and the shape above. Used by
+                ``scripts/dev/debug/check_heun_jumps.py``.
 
         Returns:
             Predicted trajectories as ``jnp.ndarray`` of shape ``(num_samples, prediction_length, 2)``
@@ -972,12 +980,19 @@ class CoDiTModel(BaseTrajectoryModel):
             ),
         }
 
+        if denoising_steps_hours is not None:
+            bad = set(denoising_steps_hours) - set(range(1, prediction_length + 1))
+            if bad:
+                raise ValueError(f"denoising_steps_hours out of range: {sorted(bad)}")
+        traced_steps = []
         for i in range(1, prediction_length + 1):
             if return_denoising_steps:
                 new_coord, new_context, denoise_steps_scaled = denoise_func(
                     subkeys, W, initial_y, batch, times[i : i + 1], jnp.int32(i),
                     start_position, interpolator,
                 )
+                if denoising_steps_hours is not None and i in denoising_steps_hours:
+                    traced_steps.append(denoise_steps_scaled)
             else:
                 new_coord, new_context = denoise_func(
                     subkeys, W, initial_y, batch, times[i : i + 1], jnp.int32(i),
@@ -988,7 +1003,12 @@ class CoDiTModel(BaseTrajectoryModel):
             batch[pred_key] = batch[pred_key].at[:, j : j + 1].set(new_context)
         pred_coords = jnp.concatenate(coords_denoised, axis=1)
         if return_denoising_steps:
-            denoised_steps_scaled = denoise_steps_scaled * self.std
+            if denoising_steps_hours is not None:
+                denoise_steps_scaled = jnp.stack(traced_steps, axis=1)
+            lead_shape = denoise_steps_scaled.shape[:-2]
+            denoised_steps_scaled = denoise_steps_scaled.reshape(
+                (-1,) + denoise_steps_scaled.shape[-2:]
+            ) * self.std
             distance_in_metres = jnp.sqrt(
                 denoised_steps_scaled[..., 0] ** 2 + denoised_steps_scaled[..., 1] ** 2
             )
@@ -997,12 +1017,12 @@ class CoDiTModel(BaseTrajectoryModel):
             )
             bearing_angle = jnp.degrees(bearing_angle)
             denoised_coords = vmap(
-                vmap(
-                    vmap(data_transform.inverse_haversine, in_axes=(None, 0, 0)),
-                    in_axes=(None, 0, 0),
-                ),
+                vmap(data_transform.inverse_haversine, in_axes=(None, 0, 0)),
                 in_axes=(None, 0, 0),
             )(start_position, distance_in_metres, bearing_angle)
+            denoised_coords = denoised_coords.reshape(
+                lead_shape + denoised_coords.shape[-2:]
+            )
             return pred_coords[:, 1:], denoised_coords
         else:
             return pred_coords[:, 1:]
