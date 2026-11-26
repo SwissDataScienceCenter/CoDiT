@@ -20,8 +20,9 @@ pip install -e .
 **Option B — conda / mamba:**
 
 ```bash
-conda env create -f environment.yml   # or: mamba env create -f environment.yml
+conda create -n codit "python>=3.10"   # or: mamba create ...
 conda activate codit
+pip install -e .
 ```
 
 **Option C — VS Code dev container:**
