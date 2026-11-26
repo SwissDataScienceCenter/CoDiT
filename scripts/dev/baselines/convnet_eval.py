@@ -53,13 +53,12 @@ if __name__ == "__main__":
         if config["start_date"].year >= 2020 and os.path.exists(config["dataset_path"]):
             val_datasets.append(dataset_name)
 
-    model = ConvNetModel(name=f"conv_net_{args.dataset}", params={})
-    model.load_trained_model()
-    #export_path = os.path.join(config_paths.CONV_NET_PATH, 'trained_models/')
-    #model = ConvNetModel.import_trained_model(f'cnn_{args.dataset}', import_path=export_path)
+    model = ConvNetModel.import_trained_model(f"cnn_{args.dataset}")
 
     for val_dataname in tqdm(val_datasets):
         data_name = val_dataname.split(".")[0]
+        if os.path.exists(os.path.join(result_path, f"{data_name}_result.npz")):
+            continue
         try:
             config = config_funcs.load_config(data_name, config_path)
             test_dataset = OceanDataset(config, length, 16, 10000, "linear")
