@@ -8,6 +8,7 @@ from codit.data_module import config_paths
 from codit.data_module.dataset import OceanTrainingDataset
 from codit.model_module.diffusion_model import CoDiTModel
 import optax
+import torch
 
 if __name__ == "__main__":
 
@@ -28,6 +29,20 @@ if __name__ == "__main__":
     parser.add_argument("--optimizer", type=str, default="adam")  # adam, adamw, sgd
     parser.add_argument("--scheduler", type=str, default="constant")  # constant, cosine
     parser.add_argument("--K", type=int, default=100)  # number of diffusion steps
+    parser.add_argument(
+        "--noise_schedule",
+        type=str,
+        default="linear",
+        choices=["linear", "cosine"],
+        help="Diffusion beta schedule. 'linear' (beta_max 0.02) reproduces the paper; "
+        "'cosine' (beta_max 0.2) ends at pure noise, matching the sampler's start.",
+    )
+    parser.add_argument(
+        "--beta_max",
+        type=float,
+        default=None,
+        help="Final beta of the schedule (default: 0.02 linear, 0.2 cosine)",
+    )
     parser.add_argument(
         "--input_vars",
         nargs="+",
@@ -54,9 +69,17 @@ if __name__ == "__main__":
         default=72,
         help="Trajectory horizon in hours. Use 72 for open_ocean, 24 for coastline.",
     )
+    parser.add_argument(
+        "--no_device_data",
+        action="store_true",
+        default=False,
+        help="Assemble batches through the PyTorch DataLoader instead of keeping the "
+        "training data on the GPU (use if it does not fit in GPU memory)",
+    )
     args = parser.parse_args()
 
     np.random.seed(args.seed)
+    torch.manual_seed(args.seed)  # DataLoader shuffling
     key = jax.random.PRNGKey(args.seed)
 
     print("Loading dataset")
@@ -80,6 +103,10 @@ if __name__ == "__main__":
     input_vars = args.input_vars
     input_var_str = "_".join(input_vars)
     model_name = f"codit_{args.model_type}_{args.dataset}_{args.context_encoder_type}_{args.optimizer}_K{args.K}_{input_var_str}"
+    if args.noise_schedule != "linear":
+        model_name += f"_{args.noise_schedule}"
+    if args.beta_max is not None:
+        model_name += f"_bmax{args.beta_max:g}"
     if args.run_name:
         model_name += f"_{args.run_name}"
     print(f"Model name: {model_name}")
@@ -91,6 +118,8 @@ if __name__ == "__main__":
             "model_type": args.model_type,
             "context_encoder_type": args.context_encoder_type,
             "K": args.K,
+            "noise_schedule": args.noise_schedule,
+            "beta_max": args.beta_max,
             "vars": args.input_vars,
             "aligned_context": not args.legacy_context,
         },
@@ -124,6 +153,7 @@ if __name__ == "__main__":
                 "scheduler": scheduler,
                 "early_stopping_patience": args.early_stopping_patience,
                 "early_stopping_min_delta": args.early_stopping_min_delta,
+                "device_data": not args.no_device_data,
             },
         )
         model.export_trained_model(model.name)

@@ -1,4 +1,5 @@
 import argparse
+import gc
 import os
 
 # mute SerializationWarning
@@ -75,6 +76,22 @@ if __name__ == "__main__":
         default=18,
         help="Noise levels visited by the Heun sampler (2N-1 network evaluations).",
     )
+    parser.add_argument(
+        "--weights",
+        type=str,
+        default="default",
+        choices=["default", "raw"],
+        help="'default': the exported model (EMA weights if trained with EMA); "
+        "'raw': the best non-EMA weights of an EMA-trained model, for comparison.",
+    )
+    parser.add_argument(
+        "--max_per_patch",
+        type=int,
+        default=0,
+        help="Evaluate at most this many trajectories per patch, evenly spaced (the "
+        "same ones for every model, so results can be compared pairwise). 0 = all. "
+        "Use with --result_subdir to keep partial results apart from full ones.",
+    )
     args = parser.parse_args()
     np.random.seed(0)
 
@@ -92,6 +109,8 @@ if __name__ == "__main__":
     result_name = model_name
     if args.sampler != "ddpm":
         result_name += f"_{args.sampler}{args.num_sampling_steps}"
+    if args.weights != "default":
+        result_name += f"_{args.weights}"
     if args.dataset == "open_ocean":
         config_path = os.path.join(config_paths.CONFIG_PATH, "open_ocean", args.split)
         result_path = os.path.join(
@@ -130,10 +149,14 @@ if __name__ == "__main__":
         val_datasets = [val_datasets[i] for i in patch_indices]
 
     # model_name = f"diffusion_model_{args.dataset}_{args.model_type}_{args.context_encoder_type}_{args.optimizer}_{args.scheduler}"
-    model = CoDiTModel.import_trained_model(model_name=model_name)
+    model = CoDiTModel.import_trained_model(model_name=model_name, weights=args.weights)
     model.set_sampler(args.sampler, args.num_sampling_steps)
     num_predicted_traj = 0
+    test_dataset = None
     for val_dataname in tqdm(val_datasets):
+        # release the previous patch (tens of GB) before loading the next one
+        test_dataset = None
+        gc.collect()
         data_name = val_dataname.split(".")[0]
         result_file = os.path.join(result_path, f"{data_name}_result.npz")
         if not os.path.exists(result_file):
@@ -147,7 +170,11 @@ if __name__ == "__main__":
             if len(test_dataset) == 0:
                 tqdm.write(f"Empty dataset: {val_dataname}")
                 continue
-            if args.evaluate_subset and len(test_dataset) > 200:
+            if args.max_per_patch and len(test_dataset) > args.max_per_patch:
+                indices = np.linspace(
+                    0, len(test_dataset) - 1, args.max_per_patch, dtype=int
+                )
+            elif args.evaluate_subset and len(test_dataset) > 200:
                 # select 200 regularly spaced indices from the dataset
                 indices = np.linspace(0, len(test_dataset) - 1, 200, dtype=int)
             else:

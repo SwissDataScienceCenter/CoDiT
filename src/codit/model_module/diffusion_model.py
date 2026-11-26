@@ -162,6 +162,13 @@ def denoise(
 # see the warning in CoDiTModel.set_sampler.
 HEUN_MAX_TERMINAL_ALPHA_BAR = 1e-3
 
+# Noise schedules selectable via the ``noise_schedule`` param, with their default beta_max.
+NOISE_SCHEDULES = {
+    "linear": scheduler.linear_schedule,
+    "cosine": scheduler.cosine_schedule,
+}
+DEFAULT_BETA_MAX = {"linear": 0.02, "cosine": 0.2}
+
 
 def edm_sigmas(alpha_bar: jnp.ndarray) -> jnp.ndarray:
     """Noise level of each DDPM step in EDM (variance-exploding) form.
@@ -360,7 +367,13 @@ class CoDiTModel(BaseTrajectoryModel):
             - ``diffusion_emb`` (int): diffusion-timestep embedding size (default ``64``)
             - ``vars`` (list[str]): context variable names used to select ``var_idx``
             - ``noise`` (str): noise model type, ``"brownian_motion"`` (default)
-            - ``beta_min`` / ``beta_max`` (float): diffusion schedule bounds (defaults ``1e-4`` / ``0.02``)
+            - ``noise_schedule`` (str): ``"linear"`` (default; used for the paper and all
+              shipped checkpoints) or ``"cosine"`` (beta follows a cosine ramp, see
+              ``scheduler.cosine_schedule``). The paper's linear schedule with
+              ``beta_max=0.02`` and K=100 ends at alpha_bar=0.36, far from the pure-noise
+              start of sampling; the cosine default ends at alpha_bar~2e-5.
+            - ``beta_min`` / ``beta_max`` (float): diffusion schedule bounds (defaults
+              ``1e-4`` / ``0.02`` for ``linear``, ``1e-4`` / ``0.2`` for ``cosine``)
             - ``aligned_context`` (bool): ``False`` for the legacy context layout of older
               checkpoints (default ``True``)
             - ``sampler`` (str): ``"ddpm"`` (ancestral, K steps; default, used for the
@@ -401,7 +414,7 @@ class CoDiTModel(BaseTrajectoryModel):
             type (str): Always ``"diffusion"``.
             model (nn.Module): Flax denoiser (GRU or Transformer).
             noise_model (WalkNoiseModel): Brownian noise process.
-            schedule_dict (dict): Precomputed linear beta schedule for K steps.
+            schedule_dict (dict): Precomputed beta schedule for K steps.
             ckpt_dir (str): Absolute path to the model's checkpoint directory.
             nn_params: Set to ``None`` at construction; populated by ``fit`` or
                 ``import_trained_model``.
@@ -417,7 +430,8 @@ class CoDiTModel(BaseTrajectoryModel):
             "sigma": 1.0,
             "dt": 0.1,
             "beta_min": 1e-4,
-            "beta_max": 0.02,  # before 0.02
+            "noise_schedule": "linear",
+            "beta_max": None,  # resolved per schedule below
             "noise": "brownian_motion",
             "interp_method": "linear",
             "max_len": 100,
@@ -429,6 +443,13 @@ class CoDiTModel(BaseTrajectoryModel):
             "rho": 7.0,
         }
         params = default_params | params
+        if params["noise_schedule"] not in NOISE_SCHEDULES:
+            raise ValueError(
+                f"Unknown noise_schedule {params['noise_schedule']!r}: "
+                f"use one of {sorted(NOISE_SCHEDULES)}"
+            )
+        if params["beta_max"] is None:
+            params["beta_max"] = DEFAULT_BETA_MAX[params["noise_schedule"]]
         super().__init__(name, params)
         model_type = params.get("model_type", default_params["model_type"])
         context_encoder_type = params.get(
@@ -471,10 +492,8 @@ class CoDiTModel(BaseTrajectoryModel):
                 num_heads=num_heads,
                 context_encoder_type=context_encoder_type,
             )
-        self.schedule_dict = scheduler.linear_schedule(
-            K,
-            beta_min=params.get("beta_min", default_params["beta_min"]),
-            beta_max=params.get("beta_max", default_params["beta_max"]),
+        self.schedule_dict = NOISE_SCHEDULES[params["noise_schedule"]](
+            K, beta_min=params["beta_min"], beta_max=params["beta_max"]
         )
 
         self.noise_model = WalkNoiseModel(
@@ -485,6 +504,7 @@ class CoDiTModel(BaseTrajectoryModel):
             T=prediction_length * dt,  # type: ignore
         )
         self.nn_params = None
+        self.nn_params_raw = None  # best non-EMA weights, set by fit when EMA is used
         self._denoise_func: Optional[Callable] = None  # cached jit-compiled step function
         self.aligned_context = bool(params["aligned_context"])
         self.set_sampler(
@@ -557,13 +577,23 @@ class CoDiTModel(BaseTrajectoryModel):
             train_params: Training hyperparameters. Supported keys:
 
                 - ``num_epochs`` (int): maximum training epochs (default ``1000``)
-                - ``num_batches_per_epoch`` (int): gradient steps per epoch (default ``100``)
+                - ``num_batches_per_epoch`` (int): gradient steps per epoch (default ``100``);
+                  the training data is cycled as needed, so this is exact
                 - ``batch_size`` (int): samples per gradient step (default ``128``)
                 - ``learning_rate`` (float): initial learning rate (default ``1e-4``)
                 - ``optimizer`` (str): ``"adam"``, ``"adamw"``, or ``"sgd"`` (default ``"adam"``)
                 - ``scheduler``: an ``optax`` schedule instance or ``None`` for constant LR
-                - ``early_stopping_patience`` (int): val-epochs without improvement before stopping (default ``10``)
-                - ``early_stopping_min_delta`` (float): minimum improvement threshold (default ``1e-4``)
+                - ``early_stopping_patience`` (int): epochs without improvement before stopping (default ``10``);
+                  the parameters of the best epoch are kept
+                - ``early_stopping_min_delta`` (float): minimum improvement of the mean val
+                  denoising MSE (absolute; default ``1e-4``)
+                - ``ema_decay`` (float | None): EMA of the weights with this maximum decay
+                  (default ``0.999``); selection and the exported model use the EMA
+                  weights, the best raw weights are exported alongside. ``None``
+                  disables EMA.
+                - ``device_data`` (bool): keep the training/validation samples on the
+                  device and assemble batches there (default ``True``); ``False`` uses
+                  the DataLoaders, e.g. when the data does not fit in device memory
                 - ``force_retrain`` (bool): retrain even if a checkpoint already exists (default ``False``)
 
         Returns:
@@ -585,6 +615,8 @@ class CoDiTModel(BaseTrajectoryModel):
             "early_stopping_patience": 10,
             "early_stopping_min_delta": 1e-4,
             "val_batch_size": 128,
+            "ema_decay": 0.999,
+            "device_data": True,
         }
 
         # assert isinstance(train_dataset.trajectories, jnp.ndarray), (
@@ -681,7 +713,7 @@ class CoDiTModel(BaseTrajectoryModel):
         if not os.path.isdir(
             os.path.join(os.path.join(self.ckpt_dir, "final"), "d")
         ) or train_params.get("force_retrain", False):
-            params, opt_state, loss_list, val_loss_list = diffusion_models.train(
+            params, opt_state, loss_list, val_loss_list, info = diffusion_models.train(
                 train_dataloader,
                 optimizer,
                 self.model,
@@ -691,6 +723,10 @@ class CoDiTModel(BaseTrajectoryModel):
                 key,
                 self.schedule_dict,
                 num_epochs=num_epochs,
+                num_batches_per_epoch=train_params.get(
+                    "num_batches_per_epoch",
+                    default_train_params["num_batches_per_epoch"],
+                ),
                 loss_list=loss_list,
                 checkpoint_mngr=mngr,
                 val_dataloader=val_dataloader,
@@ -702,6 +738,10 @@ class CoDiTModel(BaseTrajectoryModel):
                     "early_stopping_min_delta", 1e-4
                 ),
                 aligned_context=self.aligned_context,
+                ema_decay=train_params.get("ema_decay", default_train_params["ema_decay"]),
+                device_data=train_params.get(
+                    "device_data", default_train_params["device_data"]
+                ),
             )
             writer.close()
             print("storing", self.ckpt_dir)
@@ -720,8 +760,15 @@ class CoDiTModel(BaseTrajectoryModel):
                 val_loss_list=val_loss_list,
                 std=self.std,
                 aligned_context=self.aligned_context,
+                best_epoch=info["best_epoch"],
+                val_loss_raw=info["val_loss_raw"],
+                val_loss_ema=info["val_loss_ema"],
             )
             self.nn_params = params
+            # raw (non-EMA) weights of their own best epoch; exported for comparison
+            self.nn_params_raw = (
+                info["best_raw_params"] if info["val_loss_ema"] else None
+            )
             self._denoise_func = None  # invalidate cached jit (nn_params changed)
         return self
 
@@ -975,11 +1022,14 @@ class CoDiTModel(BaseTrajectoryModel):
             )
         # jnp.savez(nn_params_path, params=self.nn_params, std=self.std, allow_pickle=True)
         with open(nn_params_path, "wb") as f:
-            pickle.dump({"params": self.nn_params, "std": self.std}, f)
+            payload = {"params": self.nn_params, "std": self.std}
+            if getattr(self, "nn_params_raw", None) is not None:
+                payload["raw_params"] = self.nn_params_raw
+            pickle.dump(payload, f)
 
     @classmethod
     def import_trained_model(
-        cls, model_name: str, import_path: str | None = None
+        cls, model_name: str, import_path: str | None = None, weights: str = "default"
     ) -> "CoDiTModel":
         """Restore a trained model from a checkpoint directory.
 
@@ -987,6 +1037,9 @@ class CoDiTModel(BaseTrajectoryModel):
             model_name: Name of the checkpoint directory to load.
             import_path: Parent directory to search. Defaults to
                 ``config_paths.MODEL_PATH``.
+            weights: ``"default"`` loads the exported model (the EMA weights for
+                models trained with EMA); ``"raw"`` loads the best raw (non-EMA)
+                weights, only available for models trained with EMA.
 
         Returns:
             A ``CoDiTModel`` instance with parameters restored from the checkpoint.
@@ -1021,7 +1074,16 @@ class CoDiTModel(BaseTrajectoryModel):
 
         model = cls(model_name, model_config)
         assert isinstance(nn_params, dict), "Loaded nn_params should be a dictionary."
-        model.nn_params = nn_params["params"]
+        if weights == "default":
+            model.nn_params = nn_params["params"]
+        elif weights == "raw":
+            if "raw_params" not in nn_params:
+                raise ValueError(
+                    f"{model_name} has no raw weights (it was not trained with EMA)"
+                )
+            model.nn_params = nn_params["raw_params"]
+        else:
+            raise ValueError(f"Unknown weights {weights!r}: use 'default' or 'raw'")
         model.std = nn_params["std"]
 
         return model

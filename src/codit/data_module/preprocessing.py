@@ -3,6 +3,7 @@
 The helper is the primary entry point; scripts/dev/data/precompute_trainset.py is a
 thin CLI wrapper around it.
 """
+import gc
 import logging
 import os
 
@@ -49,6 +50,7 @@ def preprocess_configs(
             continue
         os.makedirs(cfg["dataset_path"], exist_ok=True)
         logger.info("preprocessing %s", cfg["name"])
+        raw = training = None
         try:
             raw = OceanDataset(cfg, length, num_grid_points, delta_metres, interp_method)
             if len(raw) == 0:
@@ -61,6 +63,11 @@ def preprocess_configs(
             # (missing NetCDF, corrupt file, etc.) must not abort the whole run.
             logger.warning("failed to preprocess %s: %s — skipping", cfg["name"], e)
             continue
+        finally:
+            # A loaded patch takes tens of GB. Release it before loading the next one,
+            # otherwise two patches are alive at once while the next is constructed.
+            del raw, training
+            gc.collect()
 
     datasets: list[OceanTrainingDataset] = []
     for cfg in configs:
