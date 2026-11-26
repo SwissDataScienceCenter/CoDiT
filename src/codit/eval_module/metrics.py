@@ -42,25 +42,17 @@ def get_energy_score(true_coords: jnp.ndarray, pred_coords: jnp.ndarray) -> jnp.
         score is NaN where the truth is NaN or no sample is finite.
     """
     pred_coords = _ensure_4d(pred_coords)  # (N, S, T, 2)
-    # A sample is valid at a timestep if both its coordinates are finite.
-    # Samples become NaN once a rollout leaves the context grid, so validity
-    # is decided per timestep: a sample counts where it is valid and nowhere
-    # else, in both the numerators and the denominators.
     valid = jnp.all(~jnp.isnan(pred_coords), axis=-1)  # (N, S, T)
     num_valid = jnp.sum(valid, axis=1)  # (N, T)
 
-    # E|X - y|: mean distance of the valid samples to the truth, (N, T)
     dists = vmap(_dist_to_samples)(true_coords, pred_coords)  # (N, S, T)
     expected_error = jnp.sum(jnp.where(valid, dists, 0.0), axis=1) / num_valid
 
-    # E|X - X'|: mean pairwise distance over pairs of valid samples, (N, T).
-    # V-statistic (divides by num_valid**2, self-pairs included), as before.
     num_traj = true_coords.shape[0]
     expected_cross_distance = []
     for itraj in range(num_traj):
         pred_samples = pred_coords[itraj]  # (S, T, 2)
         valid_traj = valid[itraj]  # (S, T)
-        # pairwise distances between all S samples, per timestep: (S, S, T)
         pred_distances = vmap(_dist_to_samples, in_axes=(0, None))(
             pred_samples, pred_samples
         )
@@ -70,7 +62,6 @@ def get_energy_score(true_coords: jnp.ndarray, pred_coords: jnp.ndarray) -> jnp.
         ) / (num_valid[itraj] ** 2)
         expected_cross_distance.append(cross_dist)
     expected_cross_distance = jnp.array(expected_cross_distance)  # (N, T)
-    # NaN where the truth is NaN or no sample is valid (0 / 0).
     return expected_error - 0.5 * expected_cross_distance
 
 
