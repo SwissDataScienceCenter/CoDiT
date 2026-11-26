@@ -506,6 +506,11 @@ class CoDiTModel(BaseTrajectoryModel):
         self.nn_params = None
         self.nn_params_raw = None  # best non-EMA weights, set by fit when EMA is used
         self._denoise_func: Optional[Callable] = None  # cached jit-compiled step function
+        # predict(): encode each context grid once instead of at every denoising step
+        # (same output up to float rounding, ~2x faster). False = the original path,
+        # kept so tests can compare the two.
+        self._encode_context_once = True
+        self._denoise_func_encodes = True  # which path the cached _denoise_func is for
         self.aligned_context = bool(params["aligned_context"])
         self.set_sampler(
             params["sampler"], params["num_sampling_steps"], params["rho"]
@@ -872,7 +877,12 @@ class CoDiTModel(BaseTrajectoryModel):
                 f"initial_y must have shape {sampled_y.shape}, got {initial_y.shape}"
             )
 
-        if self._denoise_func is None or return_denoising_steps:
+        encode_once = self._encode_context_once
+        if (
+            self._denoise_func is None
+            or return_denoising_steps
+            or self._denoise_func_encodes != encode_once
+        ):
             @partial(vmap, in_axes=(0, 0, 0, 0, None, None, None, None))
             def _get_denoised_trajectory(
                 key: jax.Array,
@@ -921,6 +931,10 @@ class CoDiTModel(BaseTrajectoryModel):
                 new_context = test_dataset.get_context(
                     numeric_time, new_coord, interp
                 )[..., self.var_idx]
+                if encode_once:
+                    new_context = diffusion_models.encode_context(
+                        self.model, self.nn_params, new_context  # type: ignore
+                    )
                 # NOTE: return_denoising_steps is a Python bool resolved at trace
                 # time. This function is never cached (self._denoise_func) when
                 # return_denoising_steps=True, so the two return arities are safe.
@@ -932,17 +946,29 @@ class CoDiTModel(BaseTrajectoryModel):
             denoise_func = jit(_get_denoised_trajectory)
             if not return_denoising_steps:
                 self._denoise_func = denoise_func
+                self._denoise_func_encodes = encode_once
         else:
             denoise_func = self._denoise_func
 
         keys = random.split(key, num_samples + 1)
         key, subkeys = keys[0], keys[1:]
         coords_denoised = [jnp.tile(start_position[None], (num_samples, 1, 1))]
+        # The network sees the context either as raw grids or, when encoding each grid
+        # once, as their encodings (the step function then returns encodings too).
+        if encode_once:
+            start_ctx = diffusion_models.encode_context(
+                self.model, self.nn_params, start_context  # type: ignore
+            )
+            hist_key, pred_key = "history_context_enc", "prediction_context_enc"
+        else:
+            start_ctx = start_context
+            hist_key, pred_key = "history_context", "prediction_context"
+        ctx_dims = (1,) * (start_ctx.ndim - 1)
         batch = {
             "history_target_vals": jnp.zeros((num_samples, 1, 2)),
-            "history_context": jnp.tile(start_context[None], (num_samples, 1, 1, 1, 1)),
-            "prediction_context": jnp.tile(
-                start_context[None], (num_samples, prediction_length, 1, 1, 1)
+            hist_key: jnp.tile(start_ctx[None], (num_samples, 1) + ctx_dims),
+            pred_key: jnp.tile(
+                start_ctx[None], (num_samples, prediction_length) + ctx_dims
             ),
         }
 
@@ -959,13 +985,7 @@ class CoDiTModel(BaseTrajectoryModel):
                 )
             coords_denoised.append(new_coord)
             j = self._context_slot(i)
-            batch["prediction_context"] = (
-                batch["prediction_context"].at[:, j : j + 1].set(new_context)
-            )  # jnp.concatenate([batch['prediction_context'], new_context], axis=1)
-            batch["history_target_vals"] = jnp.zeros((num_samples, 1, 2))
-            batch["history_context"] = jnp.tile(
-                start_context[None], (num_samples, 1, 1, 1, 1)
-            )
+            batch[pred_key] = batch[pred_key].at[:, j : j + 1].set(new_context)
         pred_coords = jnp.concatenate(coords_denoised, axis=1)
         if return_denoising_steps:
             denoised_steps_scaled = denoise_steps_scaled * self.std
