@@ -63,3 +63,23 @@ def test_out_of_range_hour_raises(model_and_data):
     model, data = model_and_data
     with pytest.raises(ValueError, match="out of range"):
         _predict(model, data, denoising_steps_hours=[0])
+
+
+def test_renoise_step_changes_heun_and_validates(model_and_data):
+    model, data = model_and_data
+    try:
+        with pytest.warns(UserWarning):
+            model.set_sampler("heun", 6)
+        plain, plain_steps = _predict(model, data)
+        with pytest.warns(UserWarning):
+            model.set_sampler("heun", 6, renoise_step=10)
+        renoised, steps = _predict(model, data)
+        assert steps.shape[1] == plain_steps.shape[1] + 11
+        assert np.all(np.isfinite(renoised))
+        assert not jnp.allclose(plain, renoised)
+        with pytest.raises(ValueError, match="only defined"):
+            model.set_sampler("ddpm", renoise_step=10)
+        with pytest.raises(ValueError, match="must be in"):
+            model.set_sampler("heun", 6, renoise_step=model.schedule_dict["K"])
+    finally:
+        model.set_sampler("ddpm")

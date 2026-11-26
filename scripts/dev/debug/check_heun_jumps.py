@@ -12,10 +12,15 @@ below ~10 km/h).
 ``--trace 44:49`` follows sample 44 through the Heun solves at hours 48, 49 and 50
 (only one context slot differs between them) and prints, per noise level, how far
 apart the solves are at position 49, to show the level where hour 49 splits off.
-"""
 
+``heunNrK`` (e.g. ``heun18r35``) runs Heun with N levels, re-noises each finished
+sample to DDPM step K with fresh noise and finishes with ancestral DDPM steps:
+if the jumps disappear, the network removes them once the state looks like
+training data again.
+"""
 import argparse
 import os
+import re
 import time
 
 import matplotlib
@@ -88,6 +93,17 @@ def trace(model, name, start, start_time, interp, dataset, true, num_samples,
              sigma=sig)
 
 
+def set_sampler(model, name: str) -> None:
+    if name == "ddpm":
+        model.set_sampler("ddpm")
+        return
+    m = re.fullmatch(r"heun(\d+)(?:r(\d+))?", name)
+    if m is None:
+        raise SystemExit(f"Unknown sampler {name!r}: use ddpm, heunN or heunNrK")
+    renoise = int(m.group(2)) if m.group(2) else None
+    model.set_sampler("heun", int(m.group(1)), renoise_step=renoise)
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--patch", default="open_ocean_patch_0_year_2021")
@@ -97,7 +113,7 @@ def main():
     p.add_argument("--num_samples", type=int, default=100)
     p.add_argument("--jump_km", type=float, default=10.0)
     p.add_argument("--trace", nargs="*", default=[], metavar="SAMPLE:HOUR",
-                   help="Trace these jumps through the Heun solves (Heun samplers only)")
+                   help="Trace these jumps through the solves (plain heunN samplers only)")
     p.add_argument(
         "--reference",
         default=os.path.join(
@@ -135,10 +151,11 @@ def main():
     print(f"{'sampler':8s} {'s':>6s} {'jump smp':>8s} {'jumps':>6s} {'max km/h':>9s} "
           f"{'NaN smp':>7s} {'ES24':>6s} {'ES48':>6s} {'ES72':>6s} {'PE72':>6s}")
     for name in args.samplers:
-        if name == "ddpm":
-            model.set_sampler("ddpm")
-        else:
-            model.set_sampler("heun", int(name.removeprefix("heun")))
+        set_sampler(model, name)
+        if "r" in name:
+            k = model._renoise_step
+            ab = float(model.schedule_dict["alpha_bar"][k])
+            print(f"{'':8s} re-noise to step {k}: sigma {np.sqrt((1 - ab) / ab):.3g}")
         t0 = time.time()
         pred = np.asarray(model.predict(
             start, start_time, 72, interp, dataset, num_samples=args.num_samples
@@ -178,8 +195,8 @@ def main():
     print(f"\nwritten: {stem}.png / .npz")
 
     traces = [tuple(int(v) for v in t.split(":")) for t in args.trace]
-    for name in [n for n in args.samplers if n != "ddpm"] if traces else []:
-        model.set_sampler("heun", int(name.removeprefix("heun")))
+    for name in [n for n in args.samplers if re.fullmatch(r"heun\d+", n)] if traces else []:
+        set_sampler(model, name)
         for sample, hour in traces:
             if not 2 <= hour <= 71:
                 raise SystemExit(f"--trace hour must be in 2..71, got {hour}")

@@ -310,6 +310,41 @@ def heun_denoise(
     return x, steps
 
 
+def renoise_denoise(
+    params: FrozenDict | dict,
+    y0: jnp.ndarray,
+    batch: dict,
+    model: nn.Module,
+    W: jnp.ndarray,
+    noise_model: WalkNoiseModel,
+    key: jax.Array,
+    schedule_dict: dict,
+    renoise_step: int,
+) -> tuple[jnp.ndarray, jnp.ndarray]:
+    """Diagnostics: re-noise a finished sample to step ``renoise_step``, then run DDPM.
+
+    Draws fresh noise for the forward jump ``y0 -> y_k`` (as in training) and runs
+    the ancestral steps ``renoise_step, ..., 0`` with ``backward_denoising_step``.
+
+    Returns:
+        y: The denoised trajectory (centered, scaled), shape like ``y0``.
+        steps: State after each DDPM step, shape ``(renoise_step + 1, *y0.shape)``.
+    """
+    key, subkey = random.split(key)
+    y, _ = noising_functions.diffusion_jump(
+        subkey, y0, renoise_step, schedule_dict["alpha_bar"], noise_model
+    )
+    y = y.at[:1].set(0)
+
+    def step_func(carry: tuple, i: int) -> tuple[tuple, jnp.ndarray]:
+        return backward_denoising_step(
+            carry, i, W, batch, schedule_dict, noise_model, model, params
+        )
+
+    (_, y), steps = lax.scan(step_func, (key, y), jnp.arange(renoise_step + 1)[::-1])
+    return y, steps
+
+
 def store_checkpoint(
     ckpt_file: str,
     model: nn.Module,
@@ -518,7 +553,11 @@ class CoDiTModel(BaseTrajectoryModel):
         )
 
     def set_sampler(
-        self, sampler: str, num_sampling_steps: int = 18, rho: float = 7.0
+        self,
+        sampler: str,
+        num_sampling_steps: int = 18,
+        rho: float = 7.0,
+        renoise_step: int | None = None,
     ) -> None:
         """Choose the reverse-diffusion sampler used by ``predict``.
 
@@ -528,7 +567,14 @@ class CoDiTModel(BaseTrajectoryModel):
                 network evaluations). Both work with the same trained weights.
             num_sampling_steps: Noise levels visited by the Heun sampler.
             rho: EDM step-spacing exponent for the Heun sampler.
+            renoise_step: Diagnostics only, Heun only. Re-noise each finished Heun
+                sample to this DDPM step with fresh noise and finish with ancestral
+                DDPM steps (see ``renoise_denoise``). Not exported with the model.
         """
+        if renoise_step is not None and sampler != "heun":
+            raise ValueError("renoise_step is only defined for the 'heun' sampler")
+        if renoise_step is not None and not 0 <= renoise_step < self.schedule_dict["K"]:
+            raise ValueError(f"renoise_step must be in [0, K), got {renoise_step}")
         if sampler not in ("ddpm", "heun"):
             raise ValueError(f"Unknown sampler {sampler!r}: use 'ddpm' or 'heun'")
         alpha_bar_end = float(self.schedule_dict["alpha_bar"][-1])
@@ -549,6 +595,7 @@ class CoDiTModel(BaseTrajectoryModel):
         self._heun_indices = heun_step_indices(
             self.schedule_dict, num_sampling_steps, rho
         )
+        self._renoise_step = renoise_step
         self._denoise_func = None  # invalidate cached jit (sampler changed)
 
     def center_and_scale_data(self, trajectory: jnp.ndarray) -> jnp.ndarray:
@@ -913,6 +960,19 @@ class CoDiTModel(BaseTrajectoryModel):
                         self.schedule_dict,
                         self._heun_indices,
                     )
+                    if self._renoise_step is not None:
+                        denoised, ddpm_steps = renoise_denoise(
+                            self.nn_params,  # type: ignore
+                            denoised,
+                            batch,
+                            self.model,
+                            W,
+                            self.noise_model,
+                            random.fold_in(key, 1),
+                            self.schedule_dict,
+                            self._renoise_step,
+                        )
+                        denoised_steps = jnp.concatenate([denoised_steps, ddpm_steps])
                 else:
                     denoised, denoised_steps = denoise(
                         self.nn_params,  # type: ignore
