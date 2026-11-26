@@ -9,6 +9,7 @@ from typing import Callable, Optional
 from functools import partial
 
 import jax
+import numpy as np
 import optax
 import orbax.checkpoint
 import orbax.checkpoint as ocp
@@ -157,6 +158,150 @@ def denoise(
     return y, denoising_steps
 
 
+# Heun sampling is only trusted when the forward process ends close to pure noise;
+# see the warning in CoDiTModel.set_sampler.
+HEUN_MAX_TERMINAL_ALPHA_BAR = 1e-3
+
+
+def edm_sigmas(alpha_bar: jnp.ndarray) -> jnp.ndarray:
+    """Noise level of each DDPM step in EDM (variance-exploding) form.
+
+    A DDPM state ``y_k = sqrt(ab_k) y_0 + sqrt(1 - ab_k) B`` corresponds to the EDM
+    state ``x = y_k / sqrt(ab_k) = y_0 + sigma_k B`` with
+    ``sigma_k = sqrt((1 - ab_k) / ab_k)``.
+    """
+    return jnp.sqrt((1.0 - alpha_bar) / alpha_bar)
+
+
+def heun_step_indices(
+    schedule_dict: dict, num_steps: int, rho: float = 7.0
+) -> np.ndarray:
+    """Pick the DDPM steps the Heun sampler visits.
+
+    Uses the EDM time discretisation (Karras et al. 2022, Eq. 5) between the
+    smallest and largest trained noise level, snapped (in log-sigma) to the
+    nearest trained step, so the network is only ever queried at step indices
+    it was trained on.
+
+    Args:
+        schedule_dict: DDPM schedule (needs ``alpha_bar``).
+        num_steps: Number of noise levels to visit (EDM's N). Clipped to ``[2, K]``.
+        rho: EDM spacing exponent; larger values put more steps at low noise.
+
+    Returns:
+        Strictly decreasing integer step indices, starting at ``K - 1`` and ending
+        at ``0``. Can be shorter than ``num_steps`` if snapping merges levels.
+    """
+    sigmas = np.asarray(edm_sigmas(schedule_dict["alpha_bar"]), dtype=np.float64)
+    K = len(sigmas)
+    num_steps = int(np.clip(num_steps, 2, K))
+    s_min, s_max = sigmas[0], sigmas[-1]
+    ramp = np.linspace(0.0, 1.0, num_steps)
+    targets = (
+        s_max ** (1 / rho) + ramp * (s_min ** (1 / rho) - s_max ** (1 / rho))
+    ) ** rho
+    idx = np.abs(np.log(sigmas)[:, None] - np.log(targets)[None, :]).argmin(axis=0)
+    return np.unique(idx)[::-1].astype(np.int32)
+
+
+def _ode_slope(
+    params: FrozenDict | dict,
+    model: nn.Module,
+    noise_model: WalkNoiseModel,
+    schedule_dict: dict,
+    batch: dict,
+    x: jnp.ndarray,
+    k_idx: jnp.ndarray,
+    key: jax.Array,
+) -> jnp.ndarray:
+    """dx/dsigma of the probability-flow ODE at EDM state ``x`` and DDPM step ``k_idx``.
+
+    For ``x = y_0 + sigma * L n`` (``L`` = ``noise_model.transform``) the ODE is
+    ``dx/dsigma = (x - D(x; sigma)) / sigma = L E[n | x]``, and ``E[n | x]`` is
+    exactly what the DDPM network predicts. The history handling mirrors
+    ``backward_denoising_step``.
+    """
+    k = jnp.array([k_idx])
+    y_vp = x * jnp.sqrt(schedule_dict["alpha_bar"][k_idx])
+    y_history_input = noise_model.center_data(
+        batch["history_target_vals"][..., ::-1, :]
+    )
+    y_noised_history, _ = noising_functions.forward_diffusion(
+        y_history_input, k, key, schedule_dict, noise_model
+    )
+    noise_pred = model.apply(params, y_vp[1:], y_noised_history[..., ::-1, :], batch, k)
+    assert isinstance(noise_pred, jnp.ndarray), "Model output is not a jnp.ndarray"
+    return noise_model.transform(noise_pred)
+
+
+def heun_denoise(
+    params: FrozenDict | dict,
+    y_init: jnp.ndarray,
+    batch: dict,
+    model: nn.Module,
+    noise_model: WalkNoiseModel,
+    key: jax.Array,
+    schedule_dict: dict,
+    step_indices: np.ndarray,
+) -> tuple[jnp.ndarray, jnp.ndarray]:
+    """Deterministic 2nd-order Heun sampler (EDM Algorithm 1) for a DDPM-trained model.
+
+    Solves the probability-flow ODE from the largest trained noise level down to
+    zero, visiting only ``step_indices``. Uses ``2 * len(step_indices) - 1``
+    network evaluations (Heun steps between levels, a final Euler step to
+    sigma = 0), against ``K`` for the ancestral ``denoise``.
+
+    The output is a deterministic function of ``y_init``: no noise is added
+    during sampling (``key`` only feeds the history noising, which is zero for
+    the single-point history used in CoDiT).
+
+    Args:
+        params: Network parameters.
+        y_init: Initial noise in DDPM space at step ``step_indices[0]``, same
+            distribution as for ``denoise`` (a noise-model path).
+        batch: Conditioning batch (history and context).
+        model: The denoising network.
+        noise_model: The noise model.
+        key: PRNG key.
+        schedule_dict: DDPM schedule.
+        step_indices: Decreasing DDPM step indices, from ``heun_step_indices``.
+
+    Returns:
+        y: The denoised trajectory (centered, scaled), shape like ``y_init``.
+        steps: State after each level in DDPM space, shape
+            ``(len(step_indices), *y_init.shape)``; the last entry equals ``y``.
+    """
+    alpha_bar = schedule_dict["alpha_bar"]
+    sigmas = edm_sigmas(alpha_bar)
+    idx = jnp.asarray(step_indices)
+
+    def slope(x: jnp.ndarray, k_idx: jnp.ndarray, key: jax.Array) -> jnp.ndarray:
+        return _ode_slope(
+            params, model, noise_model, schedule_dict, batch, x, k_idx, key
+        )
+
+    def heun_step(carry: tuple, ks: tuple) -> tuple[tuple, jnp.ndarray]:
+        key, x = carry
+        k_cur, k_next = ks
+        key, key_cur, key_next = random.split(key, 3)
+        h = sigmas[k_next] - sigmas[k_cur]
+        d_cur = slope(x, k_cur, key_cur)
+        x_euler = x + h * d_cur
+        d_next = slope(x_euler, k_next, key_next)
+        x = x + 0.5 * h * (d_cur + d_next)
+        x = x.at[:1].set(0)
+        return (key, x), x * jnp.sqrt(alpha_bar[k_next])
+
+    x = y_init / jnp.sqrt(alpha_bar[idx[0]])
+    (key, x), steps = lax.scan(heun_step, (key, x), (idx[:-1], idx[1:]))
+    # final Euler step from the smallest trained level to sigma = 0
+    key, subkey = random.split(key)
+    x = x - sigmas[idx[-1]] * slope(x, idx[-1], subkey)
+    x = x.at[:1].set(0)
+    steps = jnp.concatenate([steps, x[None]], axis=0)
+    return x, steps
+
+
 def store_checkpoint(
     ckpt_file: str,
     model: nn.Module,
@@ -218,6 +363,12 @@ class CoDiTModel(BaseTrajectoryModel):
             - ``beta_min`` / ``beta_max`` (float): diffusion schedule bounds (defaults ``1e-4`` / ``0.02``)
             - ``aligned_context`` (bool): ``False`` for the legacy context layout of older
               checkpoints (default ``True``)
+            - ``sampler`` (str): ``"ddpm"`` (ancestral, K steps; default, used for the
+              paper) or ``"heun"`` (deterministic EDM Heun sampler on a subset of the
+              trained steps). Can be changed after loading with ``set_sampler``.
+            - ``num_sampling_steps`` (int): noise levels visited by the Heun sampler
+              (default ``18``, i.e. 35 network evaluations)
+            - ``rho`` (float): EDM step-spacing exponent for the Heun sampler (default ``7``)
 
     Example::
 
@@ -273,6 +424,9 @@ class CoDiTModel(BaseTrajectoryModel):
             "num_heads": 8,
             "context_encoder_type": "conv",  # conv, mlp, gap
             "aligned_context": True,
+            "sampler": "ddpm",
+            "num_sampling_steps": 18,
+            "rho": 7.0,
         }
         params = default_params | params
         super().__init__(name, params)
@@ -333,6 +487,43 @@ class CoDiTModel(BaseTrajectoryModel):
         self.nn_params = None
         self._denoise_func: Optional[Callable] = None  # cached jit-compiled step function
         self.aligned_context = bool(params["aligned_context"])
+        self.set_sampler(
+            params["sampler"], params["num_sampling_steps"], params["rho"]
+        )
+
+    def set_sampler(
+        self, sampler: str, num_sampling_steps: int = 18, rho: float = 7.0
+    ) -> None:
+        """Choose the reverse-diffusion sampler used by ``predict``.
+
+        Args:
+            sampler: ``"ddpm"`` (ancestral, all K steps) or ``"heun"``
+                (deterministic EDM Heun ODE sampler, ``2 * num_sampling_steps - 1``
+                network evaluations). Both work with the same trained weights.
+            num_sampling_steps: Noise levels visited by the Heun sampler.
+            rho: EDM step-spacing exponent for the Heun sampler.
+        """
+        if sampler not in ("ddpm", "heun"):
+            raise ValueError(f"Unknown sampler {sampler!r}: use 'ddpm' or 'heun'")
+        alpha_bar_end = float(self.schedule_dict["alpha_bar"][-1])
+        if sampler == "heun" and alpha_bar_end > HEUN_MAX_TERMINAL_ALPHA_BAR:
+            warnings.warn(
+                f"The diffusion schedule ends at alpha_bar={alpha_bar_end:.3g}, far from "
+                "pure noise, but sampling starts from pure noise. The deterministic Heun "
+                "sampler cannot correct that mismatch (ancestral DDPM partly can): "
+                "expect too wide ensembles and too short mean drift. Use 'ddpm' for "
+                "this model, or retrain with a schedule that reaches noise (e.g. "
+                "beta_max=0.2 for K=100). See docs/EDM_IMPROVEMENTS.md.",
+                stacklevel=2,
+            )
+        self.sampler = sampler
+        self.params["sampler"] = sampler
+        self.params["num_sampling_steps"] = int(num_sampling_steps)
+        self.params["rho"] = float(rho)
+        self._heun_indices = heun_step_indices(
+            self.schedule_dict, num_sampling_steps, rho
+        )
+        self._denoise_func = None  # invalidate cached jit (sampler changed)
 
     def center_and_scale_data(self, trajectory: jnp.ndarray) -> jnp.ndarray:
         if len(trajectory.shape) == 2:
@@ -564,11 +755,14 @@ class CoDiTModel(BaseTrajectoryModel):
         num_samples: int = 1,
         key: jax.Array = random.PRNGKey(0),
         return_denoising_steps: bool = False,
+        initial_y: jnp.ndarray | None = None,
     ) -> jnp.ndarray | tuple[jnp.ndarray, jnp.ndarray]:
         """Sample trajectory predictions from the trained diffusion model.
 
-        Runs the full K-step reverse diffusion chain independently ``num_samples`` times,
-        each starting from a different Brownian-motion initialisation.
+        Runs the reverse diffusion chain independently ``num_samples`` times, each
+        starting from a different Brownian-motion initialisation. The sampler is set
+        by ``set_sampler``: ``"ddpm"`` runs all K ancestral steps, ``"heun"`` runs the
+        deterministic EDM Heun sampler on a subset of them.
 
         Args:
             start_position: Lat/lon of the drifter at ``start_time``, shape ``(2,)`` in decimal degrees.
@@ -580,7 +774,13 @@ class CoDiTModel(BaseTrajectoryModel):
             num_samples: Number of independent trajectory samples to draw.
             key: JAX PRNG key used for reproducible noise sampling.
             return_denoising_steps: If ``True``, also return the intermediate denoising
-                trajectory of shape ``(num_samples, K, prediction_length, 2)``.
+                trajectory of shape ``(num_samples, S, prediction_length, 2)``, with
+                ``S = K`` for ``"ddpm"`` and ``S = len(step_indices)`` for ``"heun"``.
+            initial_y: Diagnostics only. Overrides the starting state of the reverse
+                process, shape ``(num_samples, prediction_length + 1, 2)``, in the
+                model's centred and scaled units. Default ``None`` draws it from
+                the noise model. Used by
+                ``scripts/dev/debug/diagnose_prior_mismatch.py``.
 
         Returns:
             Predicted trajectories as ``jnp.ndarray`` of shape ``(num_samples, prediction_length, 2)``
@@ -615,9 +815,15 @@ class CoDiTModel(BaseTrajectoryModel):
         coords_denoised = [jnp.tile(start_position[None], (num_samples, 1, 1))]
         keys = random.split(key, num_samples + 1)
         key, subkeys = keys[0], keys[1:]
-        initial_y, _ = vmap(self.noise_model, in_axes=(0, None))(
+        sampled_y, _ = vmap(self.noise_model, in_axes=(0, None))(
             subkeys, prediction_length
         )
+        if initial_y is None:
+            initial_y = sampled_y
+        elif initial_y.shape != sampled_y.shape:
+            raise ValueError(
+                f"initial_y must have shape {sampled_y.shape}, got {initial_y.shape}"
+            )
 
         if self._denoise_func is None or return_denoising_steps:
             @partial(vmap, in_axes=(0, 0, 0, 0, None, None, None, None))
@@ -631,16 +837,28 @@ class CoDiTModel(BaseTrajectoryModel):
                 start_pos: jnp.ndarray,
                 interp: Interpolator3D,
             ) -> tuple:
-                denoised, denoised_steps = denoise(
-                    self.nn_params,  # type: ignore
-                    initial_y,
-                    batch,
-                    self.model,
-                    W,
-                    self.noise_model,
-                    key,
-                    self.schedule_dict,
-                )
+                if self.sampler == "heun":
+                    denoised, denoised_steps = heun_denoise(
+                        self.nn_params,  # type: ignore
+                        initial_y,
+                        batch,
+                        self.model,
+                        self.noise_model,
+                        key,
+                        self.schedule_dict,
+                        self._heun_indices,
+                    )
+                else:
+                    denoised, denoised_steps = denoise(
+                        self.nn_params,  # type: ignore
+                        initial_y,
+                        batch,
+                        self.model,
+                        W,
+                        self.noise_model,
+                        key,
+                        self.schedule_dict,
+                    )
                 denoised_scaled = denoised * self.std
                 distance_in_metres = jnp.sqrt(
                     denoised_scaled[:, 0] ** 2 + denoised_scaled[:, 1] ** 2

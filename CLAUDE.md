@@ -8,7 +8,7 @@ The paper is in `paper/` (PDF, TeX, and markdown versions).
 
 ## Repository status
 
-This repo is being cleaned up from a working/experimental repo (`../adopt/`) into a reproducible, publishable form. The principal development branch is `dev`. The paper is under re-revision, so Phase 1 is time-sensitive.
+This repo is being cleaned up from a working/experimental repo (`../adopt/`) into a reproducible, publishable form. The principal development branch is `dev`. The paper is published; published results must stay reproducible (keep the shipped checkpoints and default code paths, and ship retrained models as new checkpoints).
 
 The full refactor plan with phased scope, affected files, and tech debt inventory is in **[`docs/REFACTOR_PLAN.md`](docs/REFACTOR_PLAN.md)**. Each phase is developed on its own clean branch off `dev`.
 
@@ -46,7 +46,7 @@ The full refactor plan with phased scope, affected files, and tech debt inventor
 
 All scripts live under `scripts/`, split by audience:
 
-- **`scripts/user/`** — entry points for external users (reviewers, paper reproducers)
+- **`scripts/user/`** — entry points for external users (paper readers and reproducers)
   - `setup/` — `download_data.py`, `reproduce_results.sh`
   - `train/` — `codit_train.py`, `lingauss_train.py`
   - `eval/` — `codit_eval.py`, `lingauss_eval.py`

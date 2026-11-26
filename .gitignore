@@ -220,6 +220,7 @@ plans/*
 docs/*
 !docs/data_format.md
 .claude/*
+!.claude/settings.json
 .vscode/*
 
 # Local-only dev notebooks (not shipped)

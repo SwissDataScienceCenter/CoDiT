@@ -58,15 +58,17 @@ recommended. Evaluation of the shipped checkpoints runs on CPU. Plan for
 
 ### 2. Path configuration
 
-Paths resolve from the `CODIT_DATA_PATH` environment variable. If unset,
-defaults to `<repo_root>/data`.
+Data paths resolve from the `CODIT_DATA_PATH` environment variable. If unset,
+defaults to `<repo_root>/data`. Model checkpoints (`trained_models/`, `ckpts/`)
+resolve from `CODIT_MODEL_PATH`, which defaults to `<repo_root>/data` so the
+shipped checkpoints are found even when the data lives elsewhere.
 
 ```bash
 export CODIT_DATA_PATH=/path/to/your/data
 ```
 
 The on-disk layout expected under `CODIT_DATA_PATH` (datasets, configs,
-trained_models, results, bathymetry) is documented in
+results, bathymetry) is documented in
 [`docs/data_format.md`](docs/data_format.md).
 
 ### 3. Download data
@@ -278,7 +280,8 @@ export CODIT_CREDENTIALS_PATH=/path/to/your/config.ini
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `CODIT_DATA_PATH` | `<repo_root>/data` | Root for datasets, configs, trained_models, results, bathymetry |
+| `CODIT_DATA_PATH` | `<repo_root>/data` | Root for datasets, configs, results, bathymetry |
+| `CODIT_MODEL_PATH` | `<repo_root>/data` | Root for `trained_models/` and training `ckpts/` |
 | `CODIT_CREDENTIALS_PATH` | `<repo_root>/config.ini` | Location of the credentials file for fresh-region downloads |
 | `WANDB_MODE` | *(unset)* | Set to `disabled` to skip WandB logging during training |
 
