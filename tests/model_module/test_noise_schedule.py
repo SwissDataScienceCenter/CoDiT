@@ -1,7 +1,6 @@
 """Tests for the ``noise_schedule`` parameter of ``CoDiTModel``."""
 
 import os
-import warnings
 
 import numpy as np
 import pytest
@@ -14,9 +13,6 @@ PARAMS = {
     "dt": 1.0 / 24,
     "vars": ["hycom_current", "copernicus_current", "era5_wind", "bathymetry"],
     "aligned_context": True,
-    "sampler": "ddpm",
-    "num_sampling_steps": 18,
-    "rho": 7.0,
 }
 
 
@@ -39,11 +35,11 @@ def test_cosine_schedule_reaches_noise():
     assert np.all(np.diff(ab) < 0)
 
 
-def test_cosine_schedule_does_not_trigger_heun_warning():
-    model = CoDiTModel("t", PARAMS | {"noise_schedule": "cosine"})
-    with warnings.catch_warnings():
-        warnings.simplefilter("error")
-        model.set_sampler("heun")
+def test_configs_with_removed_sampler_params_still_load():
+    """Models trained while the Heun sampler existed store these keys."""
+    old = {"sampler": "heun", "num_sampling_steps": 18, "rho": 7.0}
+    model = CoDiTModel("t", PARAMS | {"noise_schedule": "cosine"} | old)
+    assert _alpha_bar_end(model) < 1e-4
 
 
 def test_explicit_beta_max_is_kept():

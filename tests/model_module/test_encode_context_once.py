@@ -119,14 +119,10 @@ def _predict(model, data, encode_once):
     )
 
 
-@pytest.mark.parametrize("sampler", ["ddpm", "heun"])
 @pytest.mark.parametrize("aligned", [False, True])
-def test_predict_matches_original_path(sampler, aligned):
+def test_predict_matches_original_path(aligned):
     model = _load("codit_GRU_coastline")
     model.aligned_context = aligned  # both context layouts (legacy one writes slot i)
-    if sampler == "heun":
-        with pytest.warns(UserWarning):
-            model.set_sampler("heun", 8)
     data = PositionContextDataset(int(np.max(model.var_idx)) + 1)
     try:
         new = _predict(model, data, encode_once=True)

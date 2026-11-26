@@ -16,7 +16,7 @@ model is reported.
     python scripts/dev/figures/compare_results.py --result_subdir retrain_cmp \\
         --models paper=codit_GRU_open_ocean \\
                  linear=codit_GRU_open_ocean_conv_adam_K100_hycom_current_copernicus_current_era5_wind \\
-                 cosine=codit_GRU_..._cosine cosine_heun=codit_GRU_..._cosine_heun18
+                 cosine=codit_GRU_..._cosine
 """
 
 import argparse
