@@ -215,6 +215,52 @@ class GAPContextEncoder(nn.Module):
         return x
 
 
+def make_context_encoder(context_encoder_type: str, hidden_size: int) -> nn.Module:
+    """Context encoder of a denoiser (one per model; encodes each grid independently)."""
+    if context_encoder_type == "conv":
+        return ConvContextEncoder(kernel_size=3, hidden_base=8, num_layers=4)
+    if context_encoder_type == "mlp":
+        return MLPContextEncoder(output_dim=hidden_size)
+    if context_encoder_type == "gap":
+        return GAPContextEncoder(output_dim=hidden_size)
+    raise ValueError(f"unknown context_encoder_type {context_encoder_type!r}")
+
+
+def encode_context(denoiser: nn.Module, params: dict, context: jnp.ndarray) -> jnp.ndarray:
+    """Apply only the context encoder of a trained denoiser.
+
+    Each context grid is encoded independently, so encodings computed here can be
+    passed to the denoiser as ``history_context_enc`` / ``prediction_context_enc``
+    instead of the raw grids, giving the same output without re-encoding unchanged
+    context at every denoising step.
+
+    Args:
+        denoiser: ``Autoregressive_Denoiser`` or ``Autoregressive_TransformerDenoiser``.
+        params: The denoiser's parameters (``{"params": ...}``).
+        context: Context grids, shape ``(..., N, G, G, C)``.
+
+    Returns:
+        Encodings, shape ``(..., N, D)``.
+    """
+    enc = make_context_encoder(denoiser.context_encoder_type, denoiser.hidden_size)
+    # the denoiser creates exactly one encoder, auto-named <Class>_0 in its scope
+    enc_params = {"params": params["params"][f"{type(enc).__name__}_0"]}
+    return enc.apply(enc_params, context)
+
+
+def _encoded_contexts(
+    context_enc: nn.Module, x: dict, with_prediction: bool
+) -> tuple[jnp.ndarray, jnp.ndarray | None]:
+    """History and prediction context encodings, precomputed (``*_enc`` keys) or not."""
+    if "history_context_enc" in x:
+        history = x["history_context_enc"]
+        prediction = x["prediction_context_enc"] if with_prediction else None
+    else:
+        history = context_enc(x["history_context"])
+        prediction = context_enc(x["prediction_context"]) if with_prediction else None
+    return history, prediction
+
+
 def get_positional_encoding_table(max_len: int, d_model: int) -> jnp.ndarray:
     """
     Get the positional encoding table.
@@ -330,21 +376,14 @@ class Autoregressive_TransformerDenoiser(nn.Module):
         )
         diff_enc = TemporalEncoding(K=self.K, num_freqs=self.diffusion_emb_dim)(k)
         # diff_enc = DiffusionEmbedding(self.diffusion_emb_dim, self.residual_hidden, self.K)(k)
-        history_context = x["history_context"]
-        # history_width = history_context.shape[-2]
-        if self.context_encoder_type == "conv":
-            context_enc = ConvContextEncoder(kernel_size=3, hidden_base=8, num_layers=4)
-        elif self.context_encoder_type == "mlp":
-            context_enc = MLPContextEncoder(output_dim=self.hidden_size)
-        elif self.context_encoder_type == "gap":
-            context_enc = GAPContextEncoder(output_dim=self.hidden_size)
-        history_context_enc = context_enc(history_context)
+        context_enc = make_context_encoder(self.context_encoder_type, self.hidden_size)
+        history_context_enc, prediction_context_enc = _encoded_contexts(
+            context_enc, x, self.context
+        )
         history_enc = history_module(history_context_enc, x["history_target_vals"], k)
         y = jnp.concatenate([y_history, y], axis=-2)
 
         if self.context:
-            prediction_context = x["prediction_context"]
-            prediction_context_enc = context_enc(prediction_context)
             context = jnp.concatenate(
                 [history_context_enc, prediction_context_enc], axis=-2
             )
@@ -449,21 +488,14 @@ class Autoregressive_Denoiser(nn.Module):
         )
         diff_enc = TemporalEncoding(K=self.K, num_freqs=self.diffusion_emb_dim)(k)
         # diff_enc = DiffusionEmbedding(self.diffusion_emb_dim, self.residual_hidden, self.K)(k)
-        history_context = x["history_context"]
-        # history_width = history_context.shape[-2]
-        if self.context_encoder_type == "conv":
-            context_enc = ConvContextEncoder(kernel_size=3, hidden_base=8, num_layers=4)
-        elif self.context_encoder_type == "mlp":
-            context_enc = MLPContextEncoder(output_dim=self.hidden_size)
-        elif self.context_encoder_type == "gap":
-            context_enc = GAPContextEncoder(output_dim=self.hidden_size)
-        history_context_enc = context_enc(history_context)
+        context_enc = make_context_encoder(self.context_encoder_type, self.hidden_size)
+        history_context_enc, prediction_context_enc = _encoded_contexts(
+            context_enc, x, self.context
+        )
         history_enc = history_module(history_context_enc, x["history_target_vals"], k)
         y = jnp.concatenate([y_history, y], axis=-2)
         inputs = encoder(y)
         if self.context:
-            prediction_context = x["prediction_context"]
-            prediction_context_enc = context_enc(prediction_context)
             context = jnp.concatenate(
                 [history_context_enc, prediction_context_enc], axis=-2
             )
