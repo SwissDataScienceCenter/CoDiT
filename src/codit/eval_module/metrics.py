@@ -17,6 +17,16 @@ def _ensure_4d(pred_coords: jnp.ndarray) -> jnp.ndarray:
     return pred_coords  # already (N, S, T, 2)
 
 
+def _dist_to_samples(traj: jnp.ndarray, samples: jnp.ndarray) -> jnp.ndarray:
+    """Per-timestep distance of one ``(T, 2)`` trajectory to ``(S, T, 2)`` samples.
+
+    Returns shape ``(S, T)``.
+    """
+    return vmap(vmap(data_transform.haversine_distance), in_axes=(None, 0))(
+        traj, samples
+    )
+
+
 def get_energy_score(true_coords: jnp.ndarray, pred_coords: jnp.ndarray) -> jnp.ndarray:
     """Calculate the energy score between true and predicted coordinates.
 
@@ -26,38 +36,30 @@ def get_energy_score(true_coords: jnp.ndarray, pred_coords: jnp.ndarray) -> jnp.
             Shape ``(N, S, T, 2)`` or ``(N, T, 2)`` for a single sample.
 
     Returns:
-        Energy score per trajectory and timestep, shape ``(N, T)``.
+        Energy score per trajectory and timestep, shape ``(N, T)``. Samples
+        are used at every timestep where they are finite (NaN samples, e.g.
+        rollouts that left the context grid, are skipped per timestep). The
+        score is NaN where the truth is NaN or no sample is finite.
     """
     pred_coords = _ensure_4d(pred_coords)  # (N, S, T, 2)
-    # Number of valid (non-NaN) samples per trajectory: (N,)
-    num_samples = jnp.sum(
-        jnp.prod(~jnp.isnan(pred_coords), axis=(-1, -2)), axis=1
-    )  # sum over S after all-finite check over (T, 2)
+    valid = jnp.all(~jnp.isnan(pred_coords), axis=-1)  # (N, S, T)
+    num_valid = jnp.sum(valid, axis=1)  # (N, T)
 
-    def _expected_err_for_traj(true_traj, pred_samples):
-        """true_traj: (T, 2), pred_samples: (S, T, 2) -> scalar per T -> (T,)."""
-        # distances: (S, T)
-        dists = vmap(lambda s: vmap(data_transform.haversine_distance)(true_traj, s))(
-            pred_samples
-        )
-        return jnp.nansum(dists, axis=0)  # (T,)
-
-    # expected_error: (N, T)
-    expected_error = vmap(_expected_err_for_traj)(true_coords, pred_coords)
-    expected_error = expected_error / num_samples[:, None]
+    dists = vmap(_dist_to_samples)(true_coords, pred_coords)  # (N, S, T)
+    expected_error = jnp.sum(jnp.where(valid, dists, 0.0), axis=1) / num_valid
 
     num_traj = true_coords.shape[0]
     expected_cross_distance = []
     for itraj in range(num_traj):
         pred_samples = pred_coords[itraj]  # (S, T, 2)
-        # pairwise distances between all S samples, per timestep: (S, S, T)
-        pred_distances = vmap(
-            lambda s1: vmap(lambda s2: vmap(data_transform.haversine_distance)(s1, s2))(
-                pred_samples
-            )
-        )(pred_samples)
-        # mean over (S, S): (T,)
-        cross_dist = jnp.nansum(pred_distances, axis=(0, 1)) / (num_samples[itraj] ** 2)
+        valid_traj = valid[itraj]  # (S, T)
+        pred_distances = vmap(_dist_to_samples, in_axes=(0, None))(
+            pred_samples, pred_samples
+        )
+        pair_valid = valid_traj[:, None, :] & valid_traj[None, :, :]  # (S, S, T)
+        cross_dist = jnp.sum(
+            jnp.where(pair_valid, pred_distances, 0.0), axis=(0, 1)
+        ) / (num_valid[itraj] ** 2)
         expected_cross_distance.append(cross_dist)
     expected_cross_distance = jnp.array(expected_cross_distance)  # (N, T)
     return expected_error - 0.5 * expected_cross_distance
