@@ -7,6 +7,8 @@
 # Output of the command and job metadata go to
 #   $CODIT_DATA_PATH/jobs/<name>/{job.log,meta.txt}
 # The commit must be on origin (the job fetches it from there).
+# GPU jobs build a fresh venv (and uv cache) on the node disk under /tmp,
+# because the CUDA wheels do not fit on the GPU launcher's work disk.
 #
 # Usage:
 #   bash scripts/dev/renku/submit_job.sh --cpu --name bl-test-1 [--ref dev] \
@@ -63,6 +65,10 @@ fi
 EXTRA_FLAGS=""
 for e in "${EXTRAS[@]+"${EXTRAS[@]}"}"; do EXTRA_FLAGS+=" --extra $e"; done
 CMD="$(printf '%q ' "$@")"
+UV_ENV=""
+if [[ "$LAUNCHER" == "$GPU_LAUNCHER" ]]; then
+  UV_ENV=$'export UV_CACHE_DIR=/tmp/uv-cache UV_PROJECT_ENVIRONMENT=/tmp/venv\nexport VIRTUAL_ENV=/tmp/venv PATH=/tmp/venv/bin:$PATH'
+fi
 
 read -r -d '' BOOTSTRAP <<EOF || true
 set -euo pipefail
@@ -78,16 +84,13 @@ exec > >(tee -a "\$OUT/job.log") 2>&1
   echo "command=$CMD"
   echo "started=\$(date -Iseconds)"
 } > "\$OUT/meta.txt"
+trap 'rc=\$?; { echo "finished=\$(date -Iseconds)"; echo "exit_code=\$rc"; } >> "\$OUT/meta.txt"' EXIT
+$UV_ENV
 cd $JOB_REPO_DIR
 git fetch --quiet origin
 git checkout --quiet --detach $SHA
 uv sync --frozen --inexact$EXTRA_FLAGS
-set +e
 $CMD
-rc=\$?
-set -e
-{ echo "finished=\$(date -Iseconds)"; echo "exit_code=\$rc"; } >> "\$OUT/meta.txt"
-exit \$rc
 EOF
 
 ARGS=(job start --launcher "$LAUNCHER" --submission-id "$NAME")
