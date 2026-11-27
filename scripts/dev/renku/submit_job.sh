@@ -11,7 +11,7 @@
 # because the CUDA wheels do not fit on the GPU launcher's work disk.
 #
 # Usage:
-#   bash scripts/dev/renku/submit_job.sh --cpu --name bl-test-1 [--ref dev] \
+#   bash scripts/dev/renku/submit_job.sh --cpu|--highmem|--gpu --name bl-test-1 [--ref dev] \
 #       [--extra parcels] [--wait] [--dry-run] -- python scripts/... --flag value
 #
 # The launcher's command is `uv run`; this script passes the job arguments.
@@ -19,6 +19,7 @@
 set -euo pipefail
 
 CPU_LAUNCHER="01M8E1GQXDGCYTG3C4RK35ACY3"
+HIGHMEM_LAUNCHER="01M8EAS7C3FMT3XF5M1R05TC4H"
 GPU_LAUNCHER="01M8E1E094GP2VMEAMQ79AS4GW"
 JOB_REPO_DIR="/home/renku/work/CoDiT"
 JOB_DATA_PATH="/home/renku/work/store/codit_data"
@@ -36,6 +37,7 @@ usage() { sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; }
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --cpu) LAUNCHER="$CPU_LAUNCHER"; shift ;;
+    --highmem) LAUNCHER="$HIGHMEM_LAUNCHER"; shift ;;
     --gpu) LAUNCHER="$GPU_LAUNCHER"; EXTRAS+=(cuda); shift ;;
     --name) NAME="$2"; shift 2 ;;
     --ref) REF="$2"; shift 2 ;;
@@ -48,7 +50,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-[[ -n "$LAUNCHER" ]] || { echo "submit_job: pass --cpu or --gpu" >&2; exit 1; }
+[[ -n "$LAUNCHER" ]] || { echo "submit_job: pass --cpu, --highmem or --gpu" >&2; exit 1; }
 [[ $# -gt 0 ]] || { echo "submit_job: no command given after --" >&2; exit 1; }
 if [[ ! "$NAME" =~ ^[a-z][a-z0-9-]{3,19}$ ]]; then
   echo "submit_job: --name must be 4-20 chars of [a-z0-9-], starting with a letter" >&2
